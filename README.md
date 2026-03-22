@@ -267,6 +267,7 @@ Thanks to all contributors who helped improve PaperBanana, whether through code,
     </tr>
     <tr>
       <td align="center" valign="top" width="16.66%"><a href="https://github.com/issyuNaN"><img src="https://avatars.githubusercontent.com/u/167730146?v=4?s=100" width="100px;" alt="issyuNaN"/><br /><sub><b>issyuNaN</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/issues?q=author%3AissyuNaN" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="16.66%"><a href="http://tsingloong.xyz"><img src="https://avatars.githubusercontent.com/u/78492333?v=4?s=100" width="100px;" alt="Tsing_loong"/><br /><sub><b>Tsing_loong</b></sub></a><br /><a href="https://github.com/dwzhu-pku/PaperBanana/commits?author=Tsingloong611" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
