@@ -36,6 +36,7 @@ class ExpConfig:
     max_critic_rounds: int = 3
     main_model_name: str = ""
     image_gen_model_name: str = ""
+    critic_b_model_name: str = ""  # Second critic model for parallel debate mode
     work_dir: Path = Path(__file__).parent.parent
 
     timestamp: str | None = None

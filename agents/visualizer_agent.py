@@ -26,6 +26,23 @@ from PIL import Image
 from utils import generation_utils, image_utils
 from .base_agent import BaseAgent
 
+import os
+
+
+def _aspect_ratio_to_glm_dims(aspect_ratio: str, base: int = 1024) -> tuple:
+    """Convert aspect ratio string (e.g. '3:2') to (width, height) divisible by 32."""
+    try:
+        w_ratio, h_ratio = (int(x) for x in aspect_ratio.split(":"))
+    except (ValueError, IndexError):
+        return base, base
+    if w_ratio >= h_ratio:
+        w = base
+        h = round(base * h_ratio / w_ratio / 32) * 32
+    else:
+        h = base
+        w = round(base * w_ratio / h_ratio / 32) * 32
+    return max(w, 32), max(h, 32)
+
 
 def _execute_plot_code_worker(code_text: str) -> str:
     """
@@ -155,7 +172,18 @@ class VisualizerAgent(BaseAgent):
                 aspect_ratio = data["additional_info"]["rounded_ratio"]
 
             if cfg["use_image_generation"]:
-                if "gpt-image" in self.model_name:
+                if "glm-image" in self.model_name.lower():
+                    glm_url = os.environ.get("GLM_IMAGE_URL", "http://localhost:30000")
+                    w, h = _aspect_ratio_to_glm_dims(aspect_ratio)
+                    response_list = await generation_utils.call_glm_image_with_retry_async(
+                        prompt=prompt_text,
+                        glm_base_url=glm_url,
+                        width=w,
+                        height=h,
+                        max_attempts=5,
+                        retry_delay=30,
+                    )
+                elif "gpt-image" in self.model_name:
                     image_config = {
                         "size": "1536x1024",
                         "quality": "high",

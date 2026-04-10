@@ -50,7 +50,7 @@ class CriticAgent(BaseAgent):
                 "context_labels": ["Methodology Section", "Figure Caption"],
             }
 
-    async def process(self, data: Dict[str, Any], source: str = "stylist") -> Dict[str, Any]:
+    async def process(self, data: Dict[str, Any], source: str = "stylist", output_prefix: str = None) -> Dict[str, Any]:
         """
         Unified processing method for both diagram and plot critique.
         Uses task_config to determine task-specific parameters.
@@ -139,12 +139,14 @@ class CriticAgent(BaseAgent):
 
         critic_suggestions = eval_result.get("critic_suggestions", "No changes needed.")
         revised_description = eval_result.get("revised_description", "No changes needed.")
-        
-        data[f"target_{task_name}_critic_suggestions{round_idx}"] = critic_suggestions
-        data[f"target_{task_name}_critic_desc{round_idx}"] = revised_description
+
+        # Use output_prefix for namespaced keys (parallel debate), else canonical keys
+        prefix = output_prefix if output_prefix is not None else f"target_{task_name}_critic"
+        data[f"{prefix}_suggestions{round_idx}"] = critic_suggestions
+        data[f"{prefix}_desc{round_idx}"] = revised_description
 
         if revised_description.strip() == "No changes needed.":
-            data[f"target_{task_name}_critic_desc{round_idx}"] = detailed_description
+            data[f"{prefix}_desc{round_idx}"] = detailed_description
 
         return data
 

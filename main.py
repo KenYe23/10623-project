@@ -30,6 +30,7 @@ from agents.stylist_agent import StylistAgent
 from agents.critic_agent import CriticAgent
 from agents.retriever_agent import RetrieverAgent
 from agents.polish_agent import PolishAgent
+from agents.parallel_critic_agent import ParallelCriticAgent
 
 from utils import config, paperviz_processor
 
@@ -88,6 +89,18 @@ async def main():
         default="",
         help="image generation model name to use (default: "")",
     )
+    parser.add_argument(
+        "--critic_b_model_name",
+        type=str,
+        default="",
+        help="second critic model for parallel debate mode (default: none)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help="resume from previous run, skipping already-processed samples",
+    )
     args = parser.parse_args()
 
     exp_config = config.ExpConfig(
@@ -99,6 +112,7 @@ async def main():
         max_critic_rounds=args.max_critic_rounds,
         main_model_name=args.main_model_name,
         image_gen_model_name=args.image_gen_model_name,
+        critic_b_model_name=args.critic_b_model_name,
         work_dir=Path(__file__).parent,
     )
     
@@ -110,6 +124,39 @@ async def main():
     with open(input_filename, "r", encoding="utf-8") as f:
         data_list = json.load(f)
 
+    # --- Resume logic: skip already-processed samples ---
+    all_result_list = []
+    if args.resume and output_filename.exists():
+        try:
+            with open(output_filename, "r", encoding="utf-8") as f:
+                existing_results = json.load(f)
+            all_result_list = existing_results
+            processed_ids = {
+                d.get("candidate_id") or d.get("paper_id") or d.get("id", "")
+                for d in existing_results
+            }
+            data_list = [
+                d for d in data_list
+                if (d.get("candidate_id") or d.get("paper_id") or d.get("id", "")) not in processed_ids
+            ]
+            print(f"[Resume] Loaded {len(existing_results)} existing results. {len(data_list)} samples remaining.")
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"[Resume] Could not load existing results ({e}). Starting from scratch.")
+            all_result_list = []
+
+    if not data_list:
+        print("All samples already processed. Nothing to do.")
+        return
+
+    # --- Create agents ---
+    parallel_critic = None
+    if exp_config.critic_b_model_name:
+        parallel_critic = ParallelCriticAgent(
+            critic_a_model=exp_config.main_model_name,
+            critic_b_model=exp_config.critic_b_model_name,
+            exp_config=exp_config,
+        )
+
     # Create processor
     processor = paperviz_processor.PaperVizProcessor(
         exp_config=exp_config,
@@ -120,12 +167,12 @@ async def main():
         critic_agent=CriticAgent(exp_config=exp_config),
         retriever_agent=RetrieverAgent(exp_config=exp_config),
         polish_agent=PolishAgent(exp_config=exp_config),
+        parallel_critic_agent=parallel_critic,
     )
 
     # Batch process documents
     concurrent_num = 10
     print(f"Using max concurrency: {concurrent_num}")
-    all_result_list = []
 
     async def save_results_and_scores(current_results):
         print(f"Incremental saving results (count: {len(current_results)}) to {output_filename}")

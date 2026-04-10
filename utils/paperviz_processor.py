@@ -29,6 +29,7 @@ from agents.stylist_agent import StylistAgent
 from agents.critic_agent import CriticAgent
 from agents.retriever_agent import RetrieverAgent
 from agents.polish_agent import PolishAgent
+from agents.parallel_critic_agent import ParallelCriticAgent
 
 from .config import ExpConfig
 from .eval_toolkits import get_score_for_image_referenced
@@ -47,6 +48,7 @@ class PaperVizProcessor:
         critic_agent: CriticAgent,
         retriever_agent: RetrieverAgent,
         polish_agent: PolishAgent,
+        parallel_critic_agent: ParallelCriticAgent = None,
     ):
         self.exp_config = exp_config
         self.vanilla_agent = vanilla_agent
@@ -56,6 +58,7 @@ class PaperVizProcessor:
         self.critic_agent = critic_agent
         self.retriever_agent = retriever_agent
         self.polish_agent = polish_agent
+        self.parallel_critic_agent = parallel_critic_agent
 
     async def _run_critic_iterations(self, data: Dict[str, Any], task_name: str, max_rounds: int = 3, source: str = "stylist") -> Dict[str, Any]:
         """
@@ -96,6 +99,40 @@ class PaperVizProcessor:
                 print(f"[Critic Round {round_idx}] Visualization FAILED (No valid image). Rolling back to previous best: {current_best_image_key}")
                 break
         
+        data["eval_image_field"] = current_best_image_key
+        return data
+
+    async def _run_parallel_debate_iterations(self, data: Dict[str, Any], task_name: str, max_rounds: int = 3, source: str = "stylist") -> Dict[str, Any]:
+        """
+        Parallel Debate critique loop: two critics → synthesizer → visualizer per round.
+        Same structure as _run_critic_iterations but uses parallel_critic_agent.
+        """
+        if source == "planner":
+            current_best_image_key = f"target_{task_name}_desc0_base64_jpg"
+        else:
+            current_best_image_key = f"target_{task_name}_stylist_desc0_base64_jpg"
+
+        for round_idx in range(max_rounds):
+            data["current_critic_round"] = round_idx
+            data = await self.parallel_critic_agent.process(data, source=source)
+
+            critic_suggestions_key = f"target_{task_name}_critic_suggestions{round_idx}"
+            critic_suggestions = data.get(critic_suggestions_key, "")
+
+            if critic_suggestions.strip() == "No changes needed.":
+                print(f"[Parallel Debate Round {round_idx}] No changes needed. Stopping.")
+                break
+
+            data = await self.visualizer_agent.process(data)
+
+            new_image_key = f"target_{task_name}_critic_desc{round_idx}_base64_jpg"
+            if new_image_key in data and data[new_image_key]:
+                current_best_image_key = new_image_key
+                print(f"[Parallel Debate Round {round_idx}] Completed. Visualization SUCCESS.")
+            else:
+                print(f"[Parallel Debate Round {round_idx}] Visualization FAILED. Rolling back to {current_best_image_key}")
+                break
+
         data["eval_image_field"] = current_best_image_key
         return data
 
@@ -160,6 +197,15 @@ class PaperVizProcessor:
         elif exp_mode == "dev_retriever":
             data = await self.retriever_agent.process(data)
             do_eval = False
+
+        elif exp_mode == "dev_parallel_debate":
+            if not already_retrieved:
+                data = await self.retriever_agent.process(data, retrieval_setting=retrieval_setting)
+            data = await self.planner_agent.process(data)
+            data = await self.stylist_agent.process(data)
+            data = await self.visualizer_agent.process(data)
+            max_rounds = data.get("max_critic_rounds", self.exp_config.max_critic_rounds)
+            data = await self._run_parallel_debate_iterations(data, task_name, max_rounds=max_rounds, source="stylist")
 
         else:
             raise ValueError(f"Unknown experiment name: {exp_mode}")
@@ -246,7 +292,7 @@ class PaperVizProcessor:
         Evaluation function - uses referenced setting (GT shown first)
         """
         data = await get_score_for_image_referenced(
-            data, task_name=exp_config.task_name, work_dir=exp_config.work_dir
+            data, task_name=exp_config.task_name, model_name=exp_config.main_model_name, work_dir=exp_config.work_dir
         )
         return data
 
