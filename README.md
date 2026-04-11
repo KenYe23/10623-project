@@ -136,9 +136,16 @@ cp configs/model_config.template.yaml configs/model_config.yaml
 
 ### 2. Quick Local Test (1 sample)
 
-To verify the pipeline works end-to-end before submitting full Slurm jobs:
+To verify the pipeline works end-to-end before submitting full Slurm jobs, request an interactive node with an 80GB GPU to avoid OutOfMemory errors:
 
 ```bash
+# Request an interactive H100 80GB node (1 hour limit)
+srun --partition=GPU-shared --gres=gpu:h100-80:1 --time=1:00:00 --pty bash
+
+# Activate environment and enter project
+conda activate paperbanana
+cd $PROJECT/PaperBanana
+
 # Start GLM-Image server in background
 sglang serve --model-path zai-org/GLM-Image --port 30000 &
 
@@ -149,7 +156,7 @@ python main.py \
     --split_name test \
     --exp_mode dev_parallel_debate \
     --max_critic_rounds 1 \
-    --main_model_name "bedrock/anthropic.claude-opus-4-6-v1" \
+    --main_model_name "bedrock/us.anthropic.claude-opus-4-6-v1" \
     --image_gen_model_name "glm-image" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
 ```
@@ -159,6 +166,7 @@ python main.py \
 Both scripts start the GLM-Image SGLang server as a background process, wait for readiness, then run the pipeline. They use `--resume` to skip already-processed samples (safe to re-submit after wall-time interrupts).
 
 ```bash
+cd $PROJECT/PaperBanana
 mkdir -p logs
 
 # Baseline: single-critic (dev_full)
@@ -170,7 +178,7 @@ sbatch scripts/run_combined_parallel.sh
 
 ### Wall-Time Resumption
 
-PSC jobs have an 8-hour wall time. Chain jobs for automatic resumption:
+PSC jobs on the `GPU-shared` partition have a maximum 48-hour wall time. For runs that you suspect might take even longer, you can chain jobs for automatic resumption:
 
 ```bash
 JOB1=$(sbatch --parsable scripts/run_combined_parallel.sh)

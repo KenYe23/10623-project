@@ -3,7 +3,7 @@
 #SBATCH -N 1
 #SBATCH -p GPU-shared
 #SBATCH --gpus=h100-80:1
-#SBATCH --time=08:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
@@ -54,7 +54,7 @@ python main.py \
     --exp_mode dev_parallel_debate \
     --retrieval_setting auto \
     --max_critic_rounds 3 \
-    --main_model_name "bedrock/anthropic.claude-opus-4-6-v1" \
+    --main_model_name "bedrock/us.anthropic.claude-opus-4-6-v1" \
     --image_gen_model_name "glm-image" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b" \
     --resume
