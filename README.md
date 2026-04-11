@@ -35,16 +35,23 @@ Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Claude O
 
 ### 1. PSC Storage Configuration
 
-PSC home directory is **25 GB** — all heavy assets must go to `$PROJECT`:
+Run this once on the PSC login node to automatically set up storage redirects every time you log in:
 
 ```bash
-# Add to your ~/.bashrc on PSC
+cat << 'EOF' >> ~/.bashrc
+
+# Storage Redirects for PaperBanana (25GB Quota Fix)
 export HF_HOME=$PROJECT/.cache/huggingface
 export TRANSFORMERS_CACHE=$PROJECT/.cache/huggingface/transformers
 export HF_DATASETS_CACHE=$PROJECT/.cache/huggingface/datasets
 export CONDA_PKGS_DIRS=$PROJECT/.conda/pkgs
+export CONDA_ENVS_DIRS=$PROJECT/.conda/envs
 export PIP_CACHE_DIR=$PROJECT/.cache/pip
 export TMPDIR=$PROJECT/tmp
+
+EOF
+
+source ~/.bashrc
 ```
 
 ### 2. Clone Repositories
@@ -76,7 +83,8 @@ pip install git+https://github.com/huggingface/diffusers.git
 Run this in an interactive session on a compute node (the download is ~30 GB):
 
 ```bash
-python -c "from diffusers.pipelines.glm_image import GlmImagePipeline; GlmImagePipeline.from_pretrained('zai-org/GLM-Image')"
+pip install accelerate
+hf download zai-org/GLM-Image --cache-dir $HF_HOME
 ```
 
 ### 5. Download the Dataset
@@ -84,11 +92,13 @@ python -c "from diffusers.pipelines.glm_image import GlmImagePipeline; GlmImageP
 Download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) and place it under `data/`:
 
 ```bash
-cd PaperBanana
 python -c "
 from huggingface_hub import snapshot_download
 snapshot_download(repo_id='dwzhu/PaperBananaBench', repo_type='dataset', local_dir='data/PaperBananaBench')
 "
+unzip -q data/PaperBananaBench/PaperBananaBench.zip -d data/PaperBananaBench
+mv data/PaperBananaBench/PaperBananaBench/* data/PaperBananaBench/
+rm -rf data/PaperBananaBench/PaperBananaBench data/PaperBananaBench/PaperBananaBench.zip
 ```
 
 Expected structure:
@@ -101,32 +111,30 @@ data/PaperBananaBench/
 └── plot/
 ```
 
-### 6. Configure AWS Bedrock Credentials
-
-Set these environment variables (the Slurm scripts read them at runtime):
-
-```bash
-export AWS_BEARER_TOKEN_BEDROCK="ABSKQmVkcm9ja0FQSUtleS0..."   # your ABSK bearer token
-export AWS_BEDROCK_REGION="us-east-1"
-```
-
-You can also add them to a `.env` file in the project root.
-
-### 7. Model Config (Optional)
-
-Copy the template and fill in API keys if you want to run non-Bedrock providers (Gemini, OpenRouter, etc.):
-
-```bash
-cp configs/model_config.template.yaml configs/model_config.yaml
-```
-
-For our experiment, API keys in this file are **not required** — all model calls route through Bedrock via CLI args.
-
 ---
 
 ## Running Experiments
 
-### Quick Local Test (1 sample)
+You only need to complete the **Setup** section once. On subsequent PSC logins, ensure your environment is configured before running.
+
+### 1. Preparation
+
+Before running any job, you must set your AWS credentials:
+
+```bash
+# Required for all model calls (Claude, Qwen)
+export AWS_BEARER_TOKEN_BEDROCK="ABSKQmVkcm9ja0FQSUtleS..."
+export AWS_BEDROCK_REGION="us-east-1"
+```
+
+**Optional: Non-Bedrock Models**
+If you wish to use providers like Gemini or OpenRouter directly (bypassing Bedrock), initialize the model config:
+```bash
+cp configs/model_config.template.yaml configs/model_config.yaml
+# Then edit configs/model_config.yaml with your API keys
+```
+
+### 2. Quick Local Test (1 sample)
 
 To verify the pipeline works end-to-end before submitting full Slurm jobs:
 

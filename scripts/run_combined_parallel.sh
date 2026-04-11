@@ -12,10 +12,11 @@ export HF_HOME=$PROJECT/.cache/huggingface
 export TRANSFORMERS_CACHE=$PROJECT/.cache/huggingface/transformers
 export HF_DATASETS_CACHE=$PROJECT/.cache/huggingface/datasets
 export CONDA_PKGS_DIRS=$PROJECT/.conda/pkgs
+export CONDA_ENVS_DIRS=$PROJECT/.conda/envs
 export PIP_CACHE_DIR=$PROJECT/.cache/pip
 export TMPDIR=$PROJECT/tmp
 mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE" \
-         "$CONDA_PKGS_DIRS" "$PIP_CACHE_DIR" "$TMPDIR" logs
+         "$CONDA_PKGS_DIRS" "$CONDA_ENVS_DIRS" "$PIP_CACHE_DIR" "$TMPDIR" logs
 
 # ── Activate environment ──
 module load anaconda3 cuda
