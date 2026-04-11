@@ -26,7 +26,7 @@ Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Claude O
 ## Prerequisites
 
 - **PSC Bridges-2 account** with GPU allocation (H100-80GB)
-- **AWS Bedrock access** with an API key (ABSK bearer token) for Claude Opus 4.6 and Qwen3-VL-235B in `us-east-1`
+- **AWS Bedrock access** with an API key (ABSK bearer token) for Claude Sonnet 4.6 and Qwen3-VL-235B in `us-east-1`
 - Python 3.12
 
 ---
