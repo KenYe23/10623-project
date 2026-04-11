@@ -316,6 +316,15 @@ def _convert_to_bedrock_format(contents: List[Dict[str, Any]]) -> List[Dict[str,
                         "source": {"bytes": b64_data},
                     }
                 })
+            elif "image_base64" in item:
+                # Shorthand format used by planner_agent
+                b64_data = ensure_image_under_limit(item["image_base64"])
+                bedrock_content.append({
+                    "image": {
+                        "format": "jpeg",
+                        "source": {"bytes": b64_data},
+                    }
+                })
     return bedrock_content
 
 
@@ -326,7 +335,7 @@ async def call_bedrock_converse_with_retry_async(
     ASYNC: Call AWS Bedrock Converse API with ABSK bearer-token auth.
     
     Args:
-        model_id: Bedrock model ID (e.g. "anthropic.claude-opus-4-6-v1")
+        model_id: Bedrock model ID (e.g. "global.anthropic.claude-opus-4-6-v1")
         contents: Generic content list (same format used everywhere)
         config: Dict with keys: system_prompt, temperature, candidate_num, max_completion_tokens
         max_attempts: Number of retry attempts
@@ -394,10 +403,20 @@ async def call_bedrock_converse_with_retry_async(
                     
         except httpx.HTTPStatusError as e:
             context_msg = f" for {error_context}" if error_context else ""
+            resp_text = e.response.text[:300]
             current_delay = min(retry_delay * (2 ** attempt), 120)
+
+            # Don't retry on unrecoverable quota/daily-limit 429s
+            if e.response.status_code == 429 and "per day" in resp_text.lower():
+                print(
+                    f"Bedrock daily token quota exceeded{context_msg}: {resp_text}. "
+                    f"Not retrying — this limit resets daily."
+                )
+                return ["Error"] * candidate_num
+
             print(
                 f"Bedrock attempt {attempt + 1} failed{context_msg}: "
-                f"HTTP {e.response.status_code} - {e.response.text[:200]}. "
+                f"HTTP {e.response.status_code} - {resp_text}. "
                 f"Retrying in {current_delay}s..."
             )
             if attempt < max_attempts - 1:

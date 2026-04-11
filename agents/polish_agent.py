@@ -111,6 +111,8 @@ class PolishAgent(BaseAgent):
         
         # Resolve relative path using work_dir
         gt_image_path = self.exp_config.work_dir / f"data/PaperBananaBench/{task_name}" / gt_image_path_rel
+        from utils.image_utils import resolve_image_path
+        gt_image_path = resolve_image_path(gt_image_path)
         
         # Load GT image as base64
         gt_image_b64 = _load_image_as_base64(str(gt_image_path))

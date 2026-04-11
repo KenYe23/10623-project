@@ -23,6 +23,7 @@ import base64, io, asyncio
 from PIL import Image
 
 from utils import generation_utils
+from utils.image_utils import resolve_image_path
 from .base_agent import BaseAgent
 
 
@@ -87,6 +88,7 @@ class PlannerAgent(BaseAgent):
             
             # Resolve relative path using work_dir
             image_path = self.exp_config.work_dir / f"data/PaperBananaBench/{cfg['task_name']}" / item["path_to_gt_image"]
+            image_path = resolve_image_path(image_path)
             with open(image_path, "rb") as f:
                 ref_image_base64 = base64.b64encode(f.read()).decode("utf-8")
             content_list.append({"type": "image", "image_base64": ref_image_base64})

@@ -25,6 +25,7 @@ from google.genai import types
 
 from prompts import diagram_eval_prompts, plot_eval_prompts
 from utils.generation_utils import call_model_with_retry_async
+from utils.image_utils import resolve_image_path
 
 # Prompt mapping: task_name -> eval_dim -> system_prompt
 PROMPT_MAP = {
@@ -227,6 +228,7 @@ async def get_score_for_image_referenced(
         # Fallback for backward compatibility (assume it's already absolute)
         path_to_gt_image = Path(path_to_gt_image_rel)
 
+    path_to_gt_image = resolve_image_path(path_to_gt_image)
     with open(path_to_gt_image, "rb") as f:
         gt_image_base64 = base64.b64encode(f.read()).decode("utf-8")
 
