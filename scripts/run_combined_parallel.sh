@@ -11,6 +11,7 @@
 export HF_HOME=$PROJECT/.cache/huggingface
 export TRANSFORMERS_CACHE=$PROJECT/.cache/huggingface/transformers
 export HF_DATASETS_CACHE=$PROJECT/.cache/huggingface/datasets
+export HF_HUB_DISABLE_XET=1
 export CONDA_PKGS_DIRS=$PROJECT/.conda/pkgs
 export CONDA_ENVS_DIRS=$PROJECT/.conda/envs
 export PIP_CACHE_DIR=$PROJECT/.cache/pip
@@ -19,8 +20,13 @@ mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE" \
          "$CONDA_PKGS_DIRS" "$CONDA_ENVS_DIRS" "$PIP_CACHE_DIR" "$TMPDIR" logs
 
 # ── Activate environment ──
-module load anaconda3 cuda
+module load anaconda3 cuda gcc/13.3.1-p20240614
 conda activate paperbanana        # adjust if your env name differs
+
+# Export compilers for SGLang CUDA kernel compilation
+export CC=$(which gcc)
+export CXX=$(which g++)
+export CUDAHOSTCXX=$CXX
 
 # ── Credentials ──
 export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:?Set AWS_BEARER_TOKEN_BEDROCK}"
@@ -54,7 +60,7 @@ python main.py \
     --exp_mode dev_parallel_debate \
     --retrieval_setting auto \
     --max_critic_rounds 3 \
-    --main_model_name "bedrock/us.anthropic.claude-opus-4-6-v1" \
+    --main_model_name "bedrock/global.anthropic.claude-opus-4-6-v1" \
     --image_gen_model_name "glm-image" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b" \
     --resume

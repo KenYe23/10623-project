@@ -64,9 +64,17 @@ git clone https://github.com/KenYe23/10623-project.git PaperBanana
 ### 3. Create Environment
 
 ```bash
-module load anaconda3 cuda
+module load anaconda3 cuda gcc/13.3.1-p20240614
 conda create -n paperbanana python=3.12 -y
 conda activate paperbanana
+
+# Install GCC 13 C++ standard libraries into Conda to prevent SGLang ABI crashes
+conda install -c conda-forge libstdcxx-ng -y
+
+# Export compilers for SGLang CUDA kernel compilation
+export CC=$(which gcc)
+export CXX=$(which g++)
+export CUDAHOSTCXX=$CXX
 
 cd PaperBanana
 pip install -r requirements.txt
@@ -142,7 +150,12 @@ To verify the pipeline works end-to-end before submitting full Slurm jobs, reque
 # Request an interactive H100 80GB node (1 hour limit)
 srun --partition=GPU-shared --gres=gpu:h100-80:1 --time=1:00:00 --pty bash
 
-# Activate environment and enter project
+# Activate environment and load compilers
+module load anaconda3 cuda gcc/13.3.1-p20240614
+export CC=$(which gcc)
+export CXX=$(which g++)
+export CUDAHOSTCXX=$CXX
+
 conda activate paperbanana
 cd $PROJECT/PaperBanana
 
@@ -156,7 +169,7 @@ python main.py \
     --split_name test \
     --exp_mode dev_parallel_debate \
     --max_critic_rounds 1 \
-    --main_model_name "bedrock/us.anthropic.claude-opus-4-6-v1" \
+    --main_model_name "bedrock/global.anthropic.claude-opus-4-6-v1" \
     --image_gen_model_name "glm-image" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
 ```
