@@ -38,20 +38,12 @@ Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Claude O
 Run this once on the PSC login node to automatically set up storage redirects every time you log in:
 
 ```bash
-cat << 'EOF' >> ~/.bashrc
-
 # Storage Redirects for PaperBanana (25GB Quota Fix)
-export HF_HOME=$PROJECT/.cache/huggingface
-export TRANSFORMERS_CACHE=$PROJECT/.cache/huggingface/transformers
-export HF_DATASETS_CACHE=$PROJECT/.cache/huggingface/datasets
-export CONDA_PKGS_DIRS=$PROJECT/.conda/pkgs
-export CONDA_ENVS_DIRS=$PROJECT/.conda/envs
-export PIP_CACHE_DIR=$PROJECT/.cache/pip
-export TMPDIR=$PROJECT/tmp
-
-EOF
-
-source ~/.bashrc
+export HF_HOME=$PROJECT/hf_cache
+export HF_HUB_CACHE=$HF_HOME/hub
+export TRANSFORMERS_CACHE=$HF_HOME/transformers
+export XDG_CACHE_HOME=$PROJECT/.cache
+export HF_HUB_DISABLE_XET=1
 ```
 
 ### 2. Clone Repositories
@@ -64,21 +56,11 @@ git clone https://github.com/KenYe23/10623-project.git PaperBanana
 ### 3. Create Environment
 
 ```bash
-module load anaconda3 cuda gcc/13.3.1-p20240614
 conda create -n paperbanana python=3.12 -y
 conda activate paperbanana
 
-# Install GCC 13 C++ standard libraries into Conda to prevent SGLang ABI crashes
-conda install -c conda-forge libstdcxx-ng -y
-
-# Export compilers for SGLang CUDA kernel compilation
-export CC=$(which gcc)
-export CXX=$(which g++)
-export CUDAHOSTCXX=$CXX
-
 cd PaperBanana
 pip install -r requirements.txt
-pip install httpx   # for Bedrock API calls
 
 # GLM-Image serving via SGLang
 pip install "sglang[diffusion] @ git+https://github.com/sgl-project/sglang.git#subdirectory=python"
@@ -91,8 +73,9 @@ pip install git+https://github.com/huggingface/diffusers.git
 Run this in an interactive session on a compute node (the download is ~30 GB):
 
 ```bash
+mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$XDG_CACHE_HOME"
 pip install accelerate
-hf download zai-org/GLM-Image --cache-dir $HF_HOME
+hf download zai-org/GLM-Image --local-dir $PROJECT/models/GLM-Image
 ```
 
 ### 5. Download the Dataset
@@ -169,7 +152,7 @@ python main.py \
     --split_name test \
     --exp_mode dev_parallel_debate \
     --max_critic_rounds 1 \
-    --main_model_name "bedrock/global.anthropic.claude-opus-4-6-v1" \
+    --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
     --image_gen_model_name "glm-image" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
 ```
