@@ -27,11 +27,15 @@ Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Claude S
 
 - **PSC Bridges-2 account** with GPU allocation (H100-80GB)
 - **AWS Bedrock access** with an API key (ABSK bearer token) for Claude Sonnet 4.6 and Qwen3-VL-235B in `us-east-1`
+- **Hugging Face account** with access to gated model `black-forest-labs/FLUX.2-dev`
+- **Hugging Face access token** (create at: https://huggingface.co/settings/tokens)
 - Python 3.12
 
 ---
 
 ## Setup
+
+Run these steps in order. Steps 1-6 are usually one-time per environment, while the "Running Experiments" section can be repeated for multiple runs.
 
 ### 1. PSC Storage Configuration
 
@@ -71,7 +75,25 @@ pip install -e . --extra-index-url https://download.pytorch.org/whl/cu129 --no-c
 cd $PROJECT/PaperBanana
 ```
 
-### 4. Pre-download FLUX.2-dev Weights
+### 4. Hugging Face login (required before downloading FLUX.2-dev)
+
+`FLUX.2-dev` is gated and requires your own Hugging Face account/token.
+
+1. Open https://huggingface.co/black-forest-labs/FLUX.2-dev and accept model terms.
+2. Create a token at https://huggingface.co/settings/tokens (read access is sufficient).
+3. Login in terminal:
+
+```bash
+hf auth login
+```
+
+Optional verification:
+
+```bash
+hf auth whoami
+```
+
+### 5. Pre-download FLUX.2-dev Weights
 
 Run this in an interactive session on a compute node (the download is ~30 GB):
 
@@ -79,13 +101,9 @@ Run this in an interactive session on a compute node (the download is ~30 GB):
 mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$XDG_CACHE_HOME"
 pip install accelerate
 hf download black-forest-labs/FLUX.2-dev --local-dir $PROJECT/models/FLUX.2-dev
-
-# Optional explicit local paths (otherwise auto-download/cache is used)
-export FLUX2_MODEL_PATH="$PROJECT/models/FLUX.2-dev/flux2-dev.safetensors"
-export AE_MODEL_PATH="$PROJECT/models/FLUX.2-dev/ae.safetensors"
 ```
 
-### 5. Download the Dataset
+### 6. Download the Dataset
 
 Download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) and place it under `data/`:
 
@@ -115,9 +133,9 @@ data/PaperBananaBench/
 
 You only need to complete the **Setup** section once. On subsequent PSC logins, ensure your environment is configured before running.
 
-### 1. Preparation
+### 1. Runtime environment variables
 
-Before running any job, you must set your AWS credentials:
+Before running any job, set these environment variables:
 
 ```bash
 # Required for all model calls (Claude, Qwen)
