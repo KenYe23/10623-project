@@ -3,55 +3,75 @@
 #SBATCH -N 1
 #SBATCH -p GPU-shared
 #SBATCH --gpus=h100-80:1
-#SBATCH --time=48:00:00
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --time=03:00:00
+#SBATCH --output=/ocean/projects/cis240137p/eshen3/PaperBanana/logs/%x_%j.out
+#SBATCH --error=/ocean/projects/cis240137p/eshen3/PaperBanana/logs/%x_%j.err
 
 # ── Storage redirects (critical: 25 GB home quota on PSC) ──
-export HF_HOME=$PROJECT/.cache/huggingface
-export TRANSFORMERS_CACHE=$PROJECT/.cache/huggingface/transformers
-export HF_DATASETS_CACHE=$PROJECT/.cache/huggingface/datasets
+export HF_HOME=$PROJECT/hf_cache
+export HF_HUB_CACHE=$HF_HOME/hub
+export TRANSFORMERS_CACHE=$HF_HOME/transformers
+export XDG_CACHE_HOME=$PROJECT/.cache
 export HF_HUB_DISABLE_XET=1
-export CONDA_PKGS_DIRS=$PROJECT/.conda/pkgs
-export CONDA_ENVS_DIRS=$PROJECT/.conda/envs
-export PIP_CACHE_DIR=$PROJECT/.cache/pip
-export TMPDIR=$PROJECT/tmp
-mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE" \
-         "$CONDA_PKGS_DIRS" "$CONDA_ENVS_DIRS" "$PIP_CACHE_DIR" "$TMPDIR" logs
 
 # ── Activate environment ──
-module load anaconda3 cuda gcc/13.3.1-p20240614
-conda activate paperbanana        # adjust if your env name differs
+source /ocean/projects/cis240137p/eshen3/anaconda3/etc/profile.d/conda.sh
+conda activate paperbanana
+module load cuda
+module load gcc/13.3.1-p20240614
+
+# Export compilers for SGLang CUDA kernel compilation
+export CC=$(which gcc)
+export CXX=$(which g++)
+export CUDAHOSTCXX=$CXX
 
 # ── Credentials ──
 export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:?Set AWS_BEARER_TOKEN_BEDROCK}"
 export AWS_BEDROCK_REGION="${AWS_BEDROCK_REGION:-us-east-1}"
 export FLUX2_SERVER_URL="http://localhost:30000"
 
+# ── Cleanup on exit ──
+cleanup() {
+  if [[ -n "${FLUX_PID:-}" ]]; then
+    kill "$FLUX_PID" 2>/dev/null || true
+    wait "$FLUX_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
 # ── 1. Start FLUX2 server ──
 echo "[$(date)] Starting FLUX2 server..."
-python scripts/flux2_http_server.py --port 30000 &
+python scripts/flux2_http_server.py --port 30000 > /ocean/projects/cis240137p/eshen3/PaperBanana/logs/sglang_${SLURM_JOB_ID}.log 2>&1 &
 FLUX_PID=$!
 
-# Wait for server readiness (up to 10 min)
-for i in $(seq 1 60); do
-    if curl -s http://localhost:30000/v1/models > /dev/null 2>&1; then
+# Wait for server readiness (up to 30 min)
+for i in $(seq 1 150); do
+    if curl -sf http://127.0.0.1:30000/v1/models > /dev/null 2>&1; then
         echo "[$(date)] FLUX2 server ready after $((i * 10))s"
+        READY=1
         break
     fi
-    if [ "$i" -eq 60 ]; then
-        echo "ERROR: FLUX2 server did not start within 10 minutes."
-        kill $FLUX_PID 2>/dev/null
+
+    if ! kill -0 "$FLUX_PID" 2>/dev/null; then
+        echo "ERROR: FLUX2 server exited early."
+        tail -200 /ocean/projects/cis240137p/eshen3/PaperBanana/logs/sglang_${SLURM_JOB_ID}.log || true
         exit 1
     fi
+
     sleep 10
 done
+
+if [[ "$READY" -ne 1 ]]; then
+    echo "ERROR: FLUX2 server did not start within 25 minutes."
+    tail -200 /ocean/projects/cis240137p/eshen3/PaperBanana/logs/sglang_${SLURM_JOB_ID}.log || true
+    exit 1
+fi
 
 # ── 2. Run baseline pipeline (single-critic, dev_full) ──
 python main.py \
     --dataset_name PaperBananaBench \
     --task_name diagram \
-    --split_name test \
+    --split_name test_mini100 \
     --exp_mode dev_full \
     --retrieval_setting auto \
     --max_critic_rounds 3 \
@@ -59,6 +79,4 @@ python main.py \
     --image_gen_model_name "flux2-dev" \
     --resume
 
-# ── 3. Cleanup ──
-kill $FLUX_PID 2>/dev/null
 echo "[$(date)] Done."
