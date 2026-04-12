@@ -22,28 +22,32 @@ import sys
 import asyncio
 import importlib
 import re
+from pathlib import Path
 
 # Ensure local imports work
 sys.path.append(os.getcwd())
 
-st.set_page_config(layout="wide", page_title="PaperVizAgent Referenced Eval Visualizer", page_icon="🍌")
+st.set_page_config(
+    layout="wide", page_title="PaperVizAgent Referenced Eval Visualizer", page_icon="🍌"
+)
 
 
 def detect_task_type(data):
     """Detect whether data is for diagram or plot task."""
     if not data:
         return "diagram"
-    
+
     sample = data[0]
     # Check for plot-specific fields
     if "content" in sample and isinstance(sample.get("content"), dict):
         return "plot"
-    # Check for diagram-specific fields
-    # Now directly accessible from top level
+        # Check for diagram-specific fields
+        # Now directly accessible from top level
         return "diagram"
-    
+
     # Default to diagram
     return "diagram"
+
 
 @st.cache_data
 def load_data(path):
@@ -51,10 +55,10 @@ def load_data(path):
     data = []
     if not os.path.exists(path):
         return []
-    
+
     # Detect file format by extension
     file_ext = os.path.splitext(path)[1].lower()
-    
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             if file_ext == ".json":
@@ -82,11 +86,20 @@ def load_data(path):
         return []
     return data
 
+
 def calculate_stats(data, dimensions):
     """Calculate win rates for each dimension."""
-    outcomes = ["Model", "Human", "Both are good", "Both are bad", "Tie", "Error", "Unknown"]
+    outcomes = [
+        "Model",
+        "Human",
+        "Both are good",
+        "Both are bad",
+        "Tie",
+        "Error",
+        "Unknown",
+    ]
     stats = {dim: {out: 0 for out in outcomes} for dim in dimensions}
-    
+
     for item in data:
         for dim in dimensions:
             outcome = item.get(f"{dim.lower()}_outcome", "Unknown")
@@ -95,6 +108,7 @@ def calculate_stats(data, dimensions):
             else:
                 stats[dim]["Unknown"] += 1
     return stats
+
 
 def base64_to_image(b64_str):
     if not b64_str:
@@ -107,10 +121,43 @@ def base64_to_image(b64_str):
     except Exception:
         return None
 
-def load_local_image(path):
-    if path and os.path.exists(path):
-        return Image.open(path)
+
+def resolve_gt_image_path(raw_path, task_type):
+    """Resolve GT image path from absolute or dataset-relative forms."""
+    if not raw_path:
+        return None
+
+    p = Path(raw_path).expanduser()
+    cwd = Path(os.getcwd())
+    candidates = []
+
+    if p.is_absolute():
+        candidates.append(p)
+
+    # Relative to working dir (repo root expected)
+    candidates.append(cwd / p)
+
+    # Relative to dataset task directory, e.g. images/foo.jpg
+    candidates.append(cwd / "data" / "PaperBananaBench" / task_type / p)
+
+    seen = set()
+    for cand in candidates:
+        cand_str = str(cand)
+        if cand_str in seen:
+            continue
+        seen.add(cand_str)
+        if cand.exists():
+            return cand
+
     return None
+
+
+def load_local_image(path, task_type="diagram"):
+    resolved_path = resolve_gt_image_path(path, task_type)
+    if resolved_path:
+        return Image.open(resolved_path)
+    return None
+
 
 def display_outcome(outcome):
     if outcome == "Model":
@@ -125,21 +172,27 @@ def display_outcome(outcome):
         return f":violet[**{outcome}**]"
     return f":gray[**{outcome}**]"
 
+
 def format_reasoning(text):
     """Format reasoning string for better readability in Streamlit."""
     if not text:
         return ""
-    
+
     # Common headers used in prompts
     headers = [
-        "Faithfulness of Human", "Faithfulness of Model",
-        "Conciseness of Human", "Conciseness of Model",
-        "Readability of Human", "Readability of Model",
-        "Aesthetics of Human", "Aesthetics of Model",
-        "Overall Quality of Human", "Overall Quality of Model",
-        "Conclusion"
+        "Faithfulness of Human",
+        "Faithfulness of Model",
+        "Conciseness of Human",
+        "Conciseness of Model",
+        "Readability of Human",
+        "Readability of Model",
+        "Aesthetics of Human",
+        "Aesthetics of Model",
+        "Overall Quality of Human",
+        "Overall Quality of Model",
+        "Conclusion",
     ]
-    
+
     formatted_text = text
     # Ensure headers at the start or after a space/punctuation are bolded and preceded by newlines
     for header in headers:
@@ -147,24 +200,25 @@ def format_reasoning(text):
         pattern = re.compile(rf"({re.escape(header)}):", re.IGNORECASE)
         # Use \n\n to ensure a clear paragraph break
         formatted_text = pattern.sub(r"\n\n**\1**:", formatted_text)
-    
+
     # Clean up: remove semicolon if it's right before our new bolded section
     formatted_text = re.sub(r";\s*\n\n", r"\n\n", formatted_text)
-    
+
     # Final trim
     return formatted_text.strip()
+
 
 async def run_eval_on_sample(sample, task_name="diagram"):
     """Hot-reload prompts and run eval."""
     import prompts.diagram_eval_prompts
     import prompts.plots_eval_prompts
     import utils.eval_toolkits
-    
+
     importlib.reload(prompts.diagram_eval_prompts)
     importlib.reload(prompts.plots_eval_prompts)
     importlib.reload(utils.eval_toolkits)
     from utils.eval_toolkits import get_score_for_image_referenced
-    
+
     # Ensure eval_image_field is set
     if "eval_image_field" not in sample:
         # Try to infer from available fields or use default
@@ -182,36 +236,44 @@ async def run_eval_on_sample(sample, task_name="diagram"):
                 sample["eval_image_field"] = "target_diagram_desc0_base64_jpg"
             else:
                 sample["eval_image_field"] = "vanilla_image_base64"  # fallback
-    
+
     return await get_score_for_image_referenced(sample, task_name=task_name)
+
 
 def main():
     st.sidebar.title("🍌 PaperVizAgent Referenced Eval")
-    file_path = st.sidebar.text_input("Results JSONL Path", placeholder="Enter path to results file...")
-    
+    file_path = st.sidebar.text_input(
+        "Results JSON/JSONL Path", placeholder="Enter path to results file..."
+    )
+
     # --- Debug Tool Section in Sidebar ---
     if "debug_sample" in st.session_state:
         st.sidebar.divider()
         st.sidebar.subheader("🛠️ Debug Target")
         debug_sample = st.session_state.debug_sample
-        identifier = debug_sample.get('id')
+        identifier = debug_sample.get("id")
         st.sidebar.info(f"Active: {identifier}\nIndex: {st.session_state.debug_idx}")
-        
+
         if st.sidebar.button("🚀 Re-run Eval (Hot-Reload Prompts)", type="primary"):
             with st.spinner("Running live evaluation..."):
                 try:
                     # Pass task_name if available
                     task_name = st.session_state.get("task_type", "diagram")
-                    new_result = asyncio.run(run_eval_on_sample(debug_sample.copy(), task_name))
+                    new_result = asyncio.run(
+                        run_eval_on_sample(debug_sample.copy(), task_name)
+                    )
                     st.session_state.debug_result = new_result
                     st.sidebar.success("Evaluation Complete!")
                 except Exception as e:
                     st.sidebar.error(f"Eval Failed: {e}")
-        
+
         if st.sidebar.button("🧹 Clear Debug State"):
-            if "debug_sample" in st.session_state: del st.session_state.debug_sample
-            if "debug_idx" in st.session_state: del st.session_state.debug_idx
-            if "debug_result" in st.session_state: del st.session_state.debug_result
+            if "debug_sample" in st.session_state:
+                del st.session_state.debug_sample
+            if "debug_idx" in st.session_state:
+                del st.session_state.debug_idx
+            if "debug_result" in st.session_state:
+                del st.session_state.debug_result
             st.rerun()
 
     if st.sidebar.button("🔄 Refresh Data"):
@@ -227,41 +289,58 @@ def main():
         st.stop()
 
     data = load_data(file_path)
-    
+
     # Detect task type
     task_type = detect_task_type(data)
     st.session_state["task_type"] = task_type
-    
+
     # --- Display Mode Selection ---
     if task_type == "plot":
         display_mode = st.sidebar.selectbox(
             "Model Display Mode",
             ["Auto", "Vanilla", "Stylist"],
-            help="Select which stage of the model output to display."
+            help="Select which stage of the model output to display.",
         )
-        
+
         mode_to_keys = {
             "Vanilla": ("target_plot_desc0_base64_jpg", "target_plot_desc0"),
-            "Stylist": ("target_plot_stylist_desc0_base64_jpg", "target_plot_stylist_desc0"),
+            "Stylist": (
+                "target_plot_stylist_desc0_base64_jpg",
+                "target_plot_stylist_desc0",
+            ),
         }
     else:  # diagram
         display_mode = st.sidebar.selectbox(
             "Model Display Mode",
             ["Auto", "Vanilla", "Stylist", "Critic"],
-            help="Select which stage of the model output to display."
+            help="Select which stage of the model output to display.",
         )
-        
+
         mode_to_keys = {
             "Vanilla": ("target_diagram_desc0_base64_jpg", "target_diagram_desc0"),
-            "Stylist": ("target_diagram_stylist_desc0_base64_jpg", "target_diagram_stylist_desc0"),
-            "Critic": ("target_diagram_critic_desc0_base64_jpg", "target_diagram_critic_desc0"),
+            "Stylist": (
+                "target_diagram_stylist_desc0_base64_jpg",
+                "target_diagram_stylist_desc0",
+            ),
+            "Critic": (
+                "target_diagram_critic_desc0_base64_jpg",
+                "target_diagram_critic_desc0",
+            ),
         }
-    
+
     # --- Search Functionality ---
     search_field = "id"
-    search_query = st.sidebar.text_input(f"🔍 Search {search_field.title()}", value="", help=f"Filter by {search_field} (case-insensitive)")
+    search_query = st.sidebar.text_input(
+        f"🔍 Search {search_field.title()}",
+        value="",
+        help=f"Filter by {search_field} (case-insensitive)",
+    )
     if search_query:
-        data = [item for item in data if search_query.lower() in str(item.get(search_field, "")).lower()]
+        data = [
+            item
+            for item in data
+            if search_query.lower() in str(item.get(search_field, "")).lower()
+        ]
         st.sidebar.caption(f"Found {len(data)} matching cases")
 
     total_items = len(data)
@@ -274,11 +353,11 @@ def main():
         return
 
     st.title(f"Referenced Evaluation Visualizer")
-    
+
     # --- Global Stats ---
     dimensions = ["Faithfulness", "Conciseness", "Readability", "Aesthetics", "Overall"]
     stats = calculate_stats(data, dimensions)
-    
+
     with st.expander("📊 Global Statistics", expanded=False):
         cols = st.columns(len(dimensions))
         for i, dim in enumerate(dimensions):
@@ -301,34 +380,34 @@ def main():
     PAGE_SIZE = 10
     if "page" not in st.session_state:
         st.session_state.page = 0
-    
+
     total_pages = max((total_items + PAGE_SIZE - 1) // PAGE_SIZE, 1)
 
     def on_page_change():
         st.session_state.page = st.session_state.page_input - 1
 
     st.sidebar.number_input(
-        "Page", 
-        min_value=1, 
-        max_value=total_pages, 
+        "Page",
+        min_value=1,
+        max_value=total_pages,
         value=st.session_state.page + 1,
         key="page_input",
-        on_change=on_page_change
+        on_change=on_page_change,
     )
-    
+
     # Ensure page is within valid range (e.g. if search reduced results)
     if st.session_state.page >= total_pages:
         st.session_state.page = total_pages - 1
-    
+
     start_idx = st.session_state.page * PAGE_SIZE
     end_idx = min(start_idx + PAGE_SIZE, total_items)
     batch = data[start_idx:end_idx]
-    
+
     st.sidebar.markdown(f"Displaying {start_idx + 1} - {end_idx} of {total_items}")
 
     for i, item in enumerate(batch):
         idx = start_idx + i
-        
+
         # Extract metadata based on task type
         identifier = item.get("id", "Unknown")
         caption_or_desc = item.get("visual_intent") or item.get("brief_desc", "N/A")
@@ -338,9 +417,11 @@ def main():
         else:  # diagram
             raw_content_label = "Method Section"
             raw_content = item.get("content", "N/A")
-        
-        is_debugging = "debug_sample" in st.session_state and st.session_state.debug_idx == idx
-        
+
+        is_debugging = (
+            "debug_sample" in st.session_state and st.session_state.debug_idx == idx
+        )
+
         with st.container(border=is_debugging):
             col_title, col_btn = st.columns([0.8, 0.2])
             with col_title:
@@ -352,7 +433,7 @@ def main():
                     st.rerun()
 
             st.caption(f"{search_field.title()}: `{identifier}`")
-            
+
             # --- Determine Image and Text for Model ---
             if display_mode == "Auto":
                 eval_field = item.get("eval_image_field")
@@ -376,7 +457,9 @@ def main():
             # Outcome Summary
             outcome_cols = st.columns(len(dimensions))
             for j, dim in enumerate(dimensions):
-                outcome_cols[j].markdown(f"**{dim}**\n{display_outcome(item.get(f'{dim.lower()}_outcome'))}")
+                outcome_cols[j].markdown(
+                    f"**{dim}**\n{display_outcome(item.get(f'{dim.lower()}_outcome'))}"
+                )
 
             # Debug Results Overlay
             if is_debugging and "debug_result" in st.session_state:
@@ -385,7 +468,9 @@ def main():
                 new_res = st.session_state.debug_result
                 new_cols = st.columns(len(dimensions))
                 for j, dim in enumerate(dimensions):
-                    new_cols[j].markdown(f"**{dim}**\n{display_outcome(new_res.get(f'{dim.lower()}_outcome'))}")
+                    new_cols[j].markdown(
+                        f"**{dim}**\n{display_outcome(new_res.get(f'{dim.lower()}_outcome'))}"
+                    )
                 st.markdown("---")
 
             # Images
@@ -397,37 +482,41 @@ def main():
                     st.image(base64_to_image(model_b64), use_container_width=True)
                 else:
                     st.error(f"Missing key: `{model_b64_key}`")
-                
+
                 with st.expander("📄 Model Description", expanded=False):
                     st.write(model_description)
-            
+
             with img_col2:
                 human_label = "Human Plot" if task_type == "plot" else "Human Diagram"
                 st.markdown(f"**{human_label}** (Reference)")
-                
+
                 # Get GT image path based on task type
                 if task_type == "plot":
                     gt_path = item.get("path_to_gt_image")
                 else:
                     gt_path = item.get("path_to_gt_image")
-                
-                gt_img = load_local_image(gt_path)
+
+                gt_img = load_local_image(gt_path, task_type=task_type)
                 if gt_img:
                     st.image(gt_img, use_container_width=True)
                 else:
                     st.error(f"Human image not found at: {gt_path}")
-                
+
                 with st.expander("📄 Human/Caption Info", expanded=False):
                     st.markdown(f"**Caption/Description:** {caption_or_desc}")
                     if task_type == "diagram":
-                        st.markdown(f"**Human Analysis:** {item.get('gt_diagram_desc0', 'N/A')}")
-            
+                        st.markdown(
+                            f"**Human Analysis:** {item.get('gt_diagram_desc0', 'N/A')}"
+                        )
+
             # Suggestions (if any)
-            suggestions = item.get("suggestions_diagram") or item.get("suggestions_plot")
+            suggestions = item.get("suggestions_diagram") or item.get(
+                "suggestions_plot"
+            )
             if suggestions:
                 with st.expander("💡 Polish Suggestions", expanded=False):
                     st.markdown(suggestions)
-            
+
             # Raw Content Section - spans full width
             with st.expander(f"📚 {raw_content_label}", expanded=False):
                 if task_type == "plot":
@@ -440,7 +529,9 @@ def main():
                 tabs = st.tabs(dimensions)
                 for tab, dim in zip(tabs, dimensions):
                     with tab:
-                        reasoning = item.get(f"{dim.lower()}_reasoning", "No reasoning provided.")
+                        reasoning = item.get(
+                            f"{dim.lower()}_reasoning", "No reasoning provided."
+                        )
                         st.markdown(format_reasoning(reasoning))
 
             if is_debugging and "debug_result" in st.session_state:
@@ -451,8 +542,9 @@ def main():
                         with tab:
                             reasoning = new_res.get(f"{dim.lower()}_reasoning", "N/A")
                             st.markdown(format_reasoning(reasoning))
-            
+
             st.divider()
+
 
 if __name__ == "__main__":
     main()

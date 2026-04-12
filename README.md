@@ -352,8 +352,32 @@ Format: Model% / Tie% / Human%
 ### Visualize Results
 
 ```bash
-# View pipeline evolution (click through critic rounds)
+# Start viewer on remote compute node (keep this terminal open)
 streamlit run visualize/show_pipeline_evolution.py
+```
+
+If running on PSC remotely, create an SSH tunnel from your **local laptop** terminal:
+
+```bash
+# Replace w010 with your active compute-node hostname
+ssh -N -L 8501:w010:8501 kye3@bridges2.psc.edu
+```
+
+Then open this URL on your laptop browser:
+
+```text
+http://localhost:8501
+```
+
+In the app sidebar, set **Results JSON/JSONL Path** to your result file, for example:
+
+```text
+/ocean/projects/cis260099p/kye3/PaperBanana/results/PaperBananaBench_diagram/0412_1423_autoret_dev_parallel_debate_test.json
+```
+
+Optional second viewer:
+
+```bash
 
 # View evaluation scorecard
 streamlit run visualize/show_referenced_eval.py
