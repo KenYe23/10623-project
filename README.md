@@ -79,8 +79,13 @@ cd $PROJECT/PaperBanana
 
 `FLUX.2-dev` is gated and requires your own Hugging Face account/token.
 
-1. Open https://huggingface.co/black-forest-labs/FLUX.2-dev and accept model terms.
+1. **Request model access:**
+   - Open https://huggingface.co/black-forest-labs/FLUX.2-dev in a browser
+   - If you see a checkbox, click to **accept model terms**
+   - If you see "Request access," click and wait for approval (usually instant)
+   
 2. Create a token at https://huggingface.co/settings/tokens (read access is sufficient).
+
 3. Login in terminal:
 
 ```bash
