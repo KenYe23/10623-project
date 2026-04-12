@@ -5,15 +5,15 @@
 ## Architecture
 
 ```
-Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Claude Opus 4.6)  ─→ Synthesizer (Claude Opus 4.6) → Visualizer → …
+Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Claude Sonnet 4.6)  ─→ Synthesizer (Claude Sonnet 4.6) → Visualizer → …
                                              └─→ Critic B (Qwen3-VL-235B)   ─↗
 ```
 
 | Role | Model | Provider |
 |------|-------|----------|
-| Planner, Stylist, Synthesizer, Critic A | Claude Opus 4.6 | AWS Bedrock |
+| Planner, Stylist, Synthesizer, Critic A | Claude Sonnet 4.6 | AWS Bedrock |
 | Critic B | Qwen3-VL-235B-A22B | AWS Bedrock |
-| Visualizer (image gen) | GLM-Image | Self-hosted (SGLang on H100) |
+| Visualizer (image gen) | FLUX.2-dev | Self-hosted (local HTTP server on H100) |
 
 **Key files:**
 - `agents/parallel_critic_agent.py` — Runs two critics in parallel via `asyncio.gather`
@@ -62,20 +62,27 @@ conda activate paperbanana
 cd PaperBanana
 pip install -r requirements.txt
 
-# GLM-Image serving via SGLang
-pip install "sglang[diffusion] @ git+https://github.com/sgl-project/sglang.git#subdirectory=python"
-pip install git+https://github.com/huggingface/transformers.git
-pip install git+https://github.com/huggingface/diffusers.git
+# FLUX.2-dev dependencies (from sibling repo)
+cd $PROJECT
+git clone https://github.com/black-forest-labs/flux2.git
+cd flux2
+pip install -e . --extra-index-url https://download.pytorch.org/whl/cu129 --no-cache-dir
+
+cd $PROJECT/PaperBanana
 ```
 
-### 4. Pre-download GLM-Image Weights
+### 4. Pre-download FLUX.2-dev Weights
 
 Run this in an interactive session on a compute node (the download is ~30 GB):
 
 ```bash
 mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$XDG_CACHE_HOME"
 pip install accelerate
-hf download zai-org/GLM-Image --local-dir $PROJECT/models/GLM-Image
+hf download black-forest-labs/FLUX.2-dev --local-dir $PROJECT/models/FLUX.2-dev
+
+# Optional explicit local paths (otherwise auto-download/cache is used)
+export FLUX2_MODEL_PATH="$PROJECT/models/FLUX.2-dev/flux2-dev.safetensors"
+export AE_MODEL_PATH="$PROJECT/models/FLUX.2-dev/ae.safetensors"
 ```
 
 ### 5. Download the Dataset
@@ -116,6 +123,7 @@ Before running any job, you must set your AWS credentials:
 # Required for all model calls (Claude, Qwen)
 export AWS_BEARER_TOKEN_BEDROCK="ABSKQmVkcm9ja0FQSUtleS..."
 export AWS_BEDROCK_REGION="us-east-1"
+export FLUX2_SERVER_URL="http://localhost:30000"
 ```
 
 **Optional: Non-Bedrock Models**
@@ -135,15 +143,11 @@ srun --partition=GPU-shared --gres=gpu:h100-80:1 --time=1:00:00 --pty bash
 
 # Activate environment and load compilers
 module load anaconda3 cuda gcc/13.3.1-p20240614
-export CC=$(which gcc)
-export CXX=$(which g++)
-export CUDAHOSTCXX=$CXX
-
 conda activate paperbanana
 cd $PROJECT/PaperBanana
 
-# Start GLM-Image server in background
-sglang serve --model-path zai-org/GLM-Image --port 30000 &
+# Start FLUX.2-dev server in background
+python scripts/flux2_http_server.py --port 30000 &
 
 # Run 1-sample smoke test
 python main.py \
@@ -153,13 +157,13 @@ python main.py \
     --exp_mode dev_parallel_debate \
     --max_critic_rounds 1 \
     --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
-    --image_gen_model_name "glm-image" \
+    --image_gen_model_name "flux2-dev" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
 ```
 
 ### Full Runs via Slurm
 
-Both scripts start the GLM-Image SGLang server as a background process, wait for readiness, then run the pipeline. They use `--resume` to skip already-processed samples (safe to re-submit after wall-time interrupts).
+Both scripts start the FLUX.2-dev local server as a background process, wait for readiness, then run the pipeline. They use `--resume` to skip already-processed samples (safe to re-submit after wall-time interrupts).
 
 ```bash
 cd $PROJECT/PaperBanana
@@ -199,8 +203,8 @@ python main.py [OPTIONS]
 | `--exp_mode` | `dev` | Pipeline mode (see below) |
 | `--retrieval_setting` | `auto` | `auto`, `manual`, `random`, `none` |
 | `--max_critic_rounds` | `3` | Max critique-refinement iterations |
-| `--main_model_name` | *(from config)* | Main VLM model (e.g. `bedrock/anthropic.claude-opus-4-6-v1`) |
-| `--image_gen_model_name` | *(from config)* | Image generation model (e.g. `glm-image`) |
+| `--main_model_name` | *(from config)* | Main VLM model (e.g. `bedrock/global.anthropic.claude-sonnet-4-6`) |
+| `--image_gen_model_name` | *(from config)* | Image generation model (e.g. `flux2-dev`) |
 | `--critic_b_model_name` | `""` | Second critic for parallel debate (e.g. `bedrock/qwen.qwen3-vl-235b-a22b`) |
 | `--resume` | `false` | Skip already-processed samples |
 
@@ -327,4 +331,4 @@ streamlit run visualize/show_referenced_eval.py
 
 ## Acknowledgments
 
-Built on [PaperBanana](https://github.com/dwzhu-pku/PaperBanana) (Zhu et al., 2026). Uses [GLM-Image](https://github.com/THUDM/GLM-Image) served via [SGLang](https://github.com/sgl-project/sglang), and [AWS Bedrock](https://aws.amazon.com/bedrock/) for Claude and Qwen VLM access.
+Built on [PaperBanana](https://github.com/dwzhu-pku/PaperBanana) (Zhu et al., 2026). Uses [FLUX.2-dev](https://github.com/black-forest-labs/flux2) (self-hosted) and [AWS Bedrock](https://aws.amazon.com/bedrock/) for Claude and Qwen VLM access.

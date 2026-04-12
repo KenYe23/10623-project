@@ -44,11 +44,13 @@ if config_path.exists():
     with open(config_path, "r", encoding="utf-8-sig") as f:
         model_config = yaml.safe_load(f) or {}
 
+
 def get_config_val(section, key, env_var, default=""):
     val = os.getenv(env_var)
     if not val and section in model_config:
         val = model_config[section].get(key)
     return val or default
+
 
 # Initialize clients lazily or with robust defaults
 gemini_client = None
@@ -95,7 +97,9 @@ def reinitialize_clients():
     else:
         openai_client = None
 
-    openrouter_api_key = get_config_val("api_keys", "openrouter_api_key", "OPENROUTER_API_KEY", "")
+    openrouter_api_key = get_config_val(
+        "api_keys", "openrouter_api_key", "OPENROUTER_API_KEY", ""
+    )
     if openrouter_api_key:
         openrouter_client = AsyncOpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -116,6 +120,7 @@ reinitialize_clients()
 # ---------------------------------------------------------------------------
 # Image size guard for Bedrock (max ~5MB per image for some models)
 # ---------------------------------------------------------------------------
+
 
 def ensure_image_under_limit(b64_jpg: str, max_bytes: int = 4_500_000) -> str:
     """Re-encode at lower JPEG quality if base64 image exceeds max_bytes."""
@@ -194,10 +199,7 @@ async def call_gemini_with_retry_async(
             )
 
             # If we are using Image Generation models to generate images
-            if (
-                "nanoviz" in model_name
-                or "image" in model_name
-            ):
+            if "nanoviz" in model_name or "image" in model_name:
                 raw_response_list = []
                 if not response.candidates or not response.candidates[0].content.parts:
                     print(
@@ -230,10 +232,10 @@ async def call_gemini_with_retry_async(
 
         except Exception as e:
             context_msg = f" for {error_context}" if error_context else ""
-            
+
             # Exponential backoff (capped at 30s)
-            current_delay = min(retry_delay * (2 ** attempt), 30)
-            
+            current_delay = min(retry_delay * (2**attempt), 30)
+
             print(
                 f"Attempt {attempt + 1} for model {model_name} failed{context_msg}: {e}. Retrying in {current_delay} seconds..."
             )
@@ -247,6 +249,7 @@ async def call_gemini_with_retry_async(
     if len(result_list) < target_candidate_count:
         result_list.extend(["Error"] * (target_candidate_count - len(result_list)))
     return result_list
+
 
 def _convert_to_claude_format(contents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -278,23 +281,22 @@ def _convert_to_openai_format(contents: List[Dict[str, Any]]) -> List[Dict[str, 
                 media_type = source.get("media_type", "image/jpeg")
                 data = source.get("data", "")
                 data_url = f"data:{media_type};base64,{data}"
-                openai_contents.append({
-                    "type": "image_url",
-                    "image_url": {"url": data_url}
-                })
+                openai_contents.append(
+                    {"type": "image_url", "image_url": {"url": data_url}}
+                )
             elif "image_base64" in item:
                 # Shorthand format used by planner_agent
                 data_url = f"data:image/jpeg;base64,{item['image_base64']}"
-                openai_contents.append({
-                    "type": "image_url",
-                    "image_url": {"url": data_url}
-                })
+                openai_contents.append(
+                    {"type": "image_url", "image_url": {"url": data_url}}
+                )
     return openai_contents
 
 
 # ---------------------------------------------------------------------------
 # Bedrock Converse API (bearer token auth via httpx)
 # ---------------------------------------------------------------------------
+
 
 def _convert_to_bedrock_format(contents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Convert generic content list to Bedrock Converse API content format."""
@@ -310,21 +312,25 @@ def _convert_to_bedrock_format(contents: List[Dict[str, Any]]) -> List[Dict[str,
                 if fmt == "jpg":
                     fmt = "jpeg"
                 b64_data = ensure_image_under_limit(source["data"])
-                bedrock_content.append({
-                    "image": {
-                        "format": fmt,
-                        "source": {"bytes": b64_data},
+                bedrock_content.append(
+                    {
+                        "image": {
+                            "format": fmt,
+                            "source": {"bytes": b64_data},
+                        }
                     }
-                })
+                )
             elif "image_base64" in item:
                 # Shorthand format used by planner_agent
                 b64_data = ensure_image_under_limit(item["image_base64"])
-                bedrock_content.append({
-                    "image": {
-                        "format": "jpeg",
-                        "source": {"bytes": b64_data},
+                bedrock_content.append(
+                    {
+                        "image": {
+                            "format": "jpeg",
+                            "source": {"bytes": b64_data},
+                        }
                     }
-                })
+                )
     return bedrock_content
 
 
@@ -333,9 +339,9 @@ async def call_bedrock_converse_with_retry_async(
 ):
     """
     ASYNC: Call AWS Bedrock Converse API with ABSK bearer-token auth.
-    
+
     Args:
-        model_id: Bedrock model ID (e.g. "global.anthropic.claude-opus-4-6-v1")
+        model_id: Bedrock model ID (e.g. "global.anthropic.claude-sonnet-4-6")
         contents: Generic content list (same format used everywhere)
         config: Dict with keys: system_prompt, temperature, candidate_num, max_completion_tokens
         max_attempts: Number of retry attempts
@@ -343,29 +349,27 @@ async def call_bedrock_converse_with_retry_async(
     """
     bearer_token = os.environ.get("AWS_BEARER_TOKEN_BEDROCK", "")
     region = os.environ.get("AWS_BEDROCK_REGION", "us-east-1")
-    
+
     if not bearer_token:
         raise RuntimeError(
             "Bedrock bearer token not set. Please set AWS_BEARER_TOKEN_BEDROCK environment variable."
         )
-    
+
     system_prompt = config.get("system_prompt", "")
     temperature = config.get("temperature", 1.0)
     candidate_num = config.get("candidate_num", 1)
     max_tokens = config.get("max_completion_tokens", 50000)
-    
+
     url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/converse"
     headers = {
         "Authorization": f"Bearer {bearer_token}",
         "Content-Type": "application/json",
     }
-    
+
     bedrock_content = _convert_to_bedrock_format(contents)
-    
+
     payload = {
-        "messages": [
-            {"role": "user", "content": bedrock_content}
-        ],
+        "messages": [{"role": "user", "content": bedrock_content}],
         "inferenceConfig": {
             "temperature": temperature,
             "maxTokens": max_tokens,
@@ -373,26 +377,26 @@ async def call_bedrock_converse_with_retry_async(
     }
     if system_prompt:
         payload["system"] = [{"text": system_prompt}]
-    
+
     response_text_list = []
-    
+
     for attempt in range(max_attempts):
         try:
             async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(url, headers=headers, json=payload)
             resp.raise_for_status()
             data = resp.json()
-            
+
             # Extract text from Bedrock Converse response
             output = data.get("output", {})
             message = output.get("message", {})
             content_blocks = message.get("content", [])
-            
+
             text_parts = []
             for block in content_blocks:
                 if "text" in block:
                     text_parts.append(block["text"])
-            
+
             if text_parts:
                 response_text_list.append("\n".join(text_parts))
                 break
@@ -400,11 +404,11 @@ async def call_bedrock_converse_with_retry_async(
                 print(f"[Bedrock] Empty response, retrying...")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(retry_delay)
-                    
+
         except httpx.HTTPStatusError as e:
             context_msg = f" for {error_context}" if error_context else ""
             resp_text = e.response.text[:300]
-            current_delay = min(retry_delay * (2 ** attempt), 120)
+            current_delay = min(retry_delay * (2**attempt), 120)
 
             # Don't retry on unrecoverable quota/daily-limit 429s
             if e.response.status_code == 429 and "per day" in resp_text.lower():
@@ -426,7 +430,7 @@ async def call_bedrock_converse_with_retry_async(
                 return ["Error"] * candidate_num
         except Exception as e:
             context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 120)
+            current_delay = min(retry_delay * (2**attempt), 120)
             print(
                 f"Bedrock attempt {attempt + 1} failed{context_msg}: {e}. "
                 f"Retrying in {current_delay}s..."
@@ -436,18 +440,16 @@ async def call_bedrock_converse_with_retry_async(
             else:
                 print(f"Error: All {max_attempts} Bedrock attempts failed{context_msg}")
                 return ["Error"] * candidate_num
-    
+
     if not response_text_list:
         return ["Error"] * candidate_num
-    
+
     # Generate remaining candidates if needed
     remaining = candidate_num - len(response_text_list)
     if remaining > 0:
         tasks = []
         for _ in range(remaining):
-            tasks.append(
-                _bedrock_single_call(url, headers, payload)
-            )
+            tasks.append(_bedrock_single_call(url, headers, payload))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for res in results:
             if isinstance(res, Exception):
@@ -455,7 +457,7 @@ async def call_bedrock_converse_with_retry_async(
                 response_text_list.append("Error")
             else:
                 response_text_list.append(res)
-    
+
     return response_text_list
 
 
@@ -471,12 +473,13 @@ async def _bedrock_single_call(url: str, headers: dict, payload: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# GLM-Image via SGLang (OpenAI-compatible endpoint)
+# FLUX.2-dev local HTTP server (OpenAI-compatible endpoint)
 # ---------------------------------------------------------------------------
 
-async def call_glm_image_with_retry_async(
+
+async def call_flux2_image_with_retry_async(
     prompt: str,
-    glm_base_url: str = "http://localhost:30000",
+    flux_base_url: str = "http://localhost:30000",
     width: int = 1024,
     height: int = 1024,
     max_attempts: int = 5,
@@ -484,46 +487,46 @@ async def call_glm_image_with_retry_async(
     error_context: str = "",
 ) -> List[str]:
     """
-    Call self-hosted GLM-Image via SGLang's OpenAI-compatible endpoint.
+    Call self-hosted FLUX.2-dev via local OpenAI-compatible endpoint.
     Returns a list with one base64-encoded image string.
     """
-    url = f"{glm_base_url}/v1/images/generations"
+    url = f"{flux_base_url}/v1/images/generations"
     payload = {
-        "model": "zai-org/GLM-Image",
+        "model": "black-forest-labs/FLUX.2-dev",
         "prompt": prompt,
         "n": 1,
         "response_format": "b64_json",
         "size": f"{width}x{height}",
     }
-    
+
     for attempt in range(max_attempts):
         try:
             async with httpx.AsyncClient(timeout=600) as client:
                 resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
-            
+
             if data.get("data") and data["data"][0].get("b64_json"):
                 return [data["data"][0]["b64_json"]]
             else:
-                print(f"[GLM-Image] No image data in response, retrying...")
+                print(f"[FLUX2] No image data in response, retrying...")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(retry_delay)
                 continue
-                
+
         except Exception as e:
             context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 120)
+            current_delay = min(retry_delay * (2**attempt), 120)
             print(
-                f"GLM-Image attempt {attempt + 1} failed{context_msg}: {e}. "
+                f"FLUX2 attempt {attempt + 1} failed{context_msg}: {e}. "
                 f"Retrying in {current_delay}s..."
             )
             if attempt < max_attempts - 1:
                 await asyncio.sleep(current_delay)
             else:
-                print(f"Error: All {max_attempts} GLM-Image attempts failed{context_msg}")
+                print(f"Error: All {max_attempts} FLUX2 attempts failed{context_msg}")
                 return ["Error"]
-    
+
     return ["Error"]
 
 
@@ -538,7 +541,11 @@ async def call_claude_with_retry_async(
     system_prompt = config["system_prompt"]
     temperature = config["temperature"]
     candidate_num = config["candidate_num"]
-    max_output_tokens = config["max_output_tokens"] if "max_output_tokens" in config else config.get("max_completion_tokens", 50000)
+    max_output_tokens = (
+        config["max_output_tokens"]
+        if "max_output_tokens" in config
+        else config.get("max_completion_tokens", 50000)
+    )
     response_text_list = []
 
     # --- Preparation Phase ---
@@ -590,9 +597,7 @@ async def call_claude_with_retry_async(
                 model=model_name,
                 max_tokens=max_output_tokens,
                 temperature=temperature,
-                messages=[
-                    {"role": "user", "content": valid_claude_contents}
-                ],
+                messages=[{"role": "user", "content": valid_claude_contents}],
                 system=system_prompt,
             )
             for _ in range(remaining_candidates)
@@ -607,6 +612,7 @@ async def call_claude_with_retry_async(
                 response_text_list.append(res.content[0].text)
 
     return response_text_list
+
 
 async def call_openai_with_retry_async(
     model_name, contents, config, max_attempts=5, retry_delay=30, error_context=""
@@ -630,7 +636,7 @@ async def call_openai_with_retry_async(
                 model=model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": openai_contents}
+                    {"role": "user", "content": openai_contents},
                 ],
                 temperature=temperature,
                 max_completion_tokens=max_completion_tokens,
@@ -672,7 +678,7 @@ async def call_openai_with_retry_async(
                 model=model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": valid_openai_contents}
+                    {"role": "user", "content": valid_openai_contents},
                 ],
                 temperature=temperature,
                 max_completion_tokens=max_completion_tokens,
@@ -701,28 +707,32 @@ async def call_openai_image_generation_with_retry_async(
     quality = config.get("quality", "high")
     background = config.get("background", "opaque")
     output_format = config.get("output_format", "png")
-    
+
     gen_params = {
         "model": model_name,
         "prompt": prompt,
         "n": 1,
         "size": size,
     }
-    
-    gen_params.update({
-        "quality": quality,
-        "background": background,
-        "output_format": output_format,
-    })
+
+    gen_params.update(
+        {
+            "quality": quality,
+            "background": background,
+            "output_format": output_format,
+        }
+    )
 
     for attempt in range(max_attempts):
         try:
             response = await openai_client.images.generate(**gen_params)
-            
+
             if response.data and response.data[0].b64_json:
                 return [response.data[0].b64_json]
             else:
-                print(f"[Warning]: Failed to generate image via OpenAI, no data returned.")
+                print(
+                    f"[Warning]: Failed to generate image via OpenAI, no data returned."
+                )
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(retry_delay)
                 continue
@@ -790,7 +800,7 @@ async def call_openrouter_with_retry_async(
         except Exception as e:
             error_str = str(e).lower()
             context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
+            current_delay = min(retry_delay * (2**attempt), 60)
             print(
                 f"OpenRouter attempt {attempt + 1} failed{context_msg}: {error_str}. "
                 f"Retrying in {current_delay}s..."
@@ -836,9 +846,7 @@ async def call_openrouter_image_generation_with_retry_async(
     ASYNC: Call OpenRouter image generation via direct httpx POST.
     """
     if not openrouter_api_key:
-        raise RuntimeError(
-            "OpenRouter client was not initialized: missing API key."
-        )
+        raise RuntimeError("OpenRouter client was not initialized: missing API key.")
 
     system_prompt = config.get("system_prompt", "")
     temperature = config.get("temperature", 1.0)
@@ -884,7 +892,9 @@ async def call_openrouter_image_generation_with_retry_async(
 
             choices = data.get("choices", [])
             if not choices:
-                print(f"[Warning]: OpenRouter image generation returned no choices, retrying...")
+                print(
+                    f"[Warning]: OpenRouter image generation returned no choices, retrying..."
+                )
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(retry_delay)
                 continue
@@ -922,14 +932,16 @@ async def call_openrouter_image_generation_with_retry_async(
                     if b64_data:
                         return [b64_data]
 
-            print(f"[Warning]: OpenRouter image generation returned no images, retrying...")
+            print(
+                f"[Warning]: OpenRouter image generation returned no images, retrying..."
+            )
             if attempt < max_attempts - 1:
                 await asyncio.sleep(retry_delay)
             continue
 
         except httpx.HTTPStatusError as e:
             context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
+            current_delay = min(retry_delay * (2**attempt), 60)
             print(
                 f"OpenRouter image gen attempt {attempt + 1} failed{context_msg}: "
                 f"HTTP {e.response.status_code} - {e.response.text}. "
@@ -942,7 +954,7 @@ async def call_openrouter_image_generation_with_retry_async(
                 return ["Error"]
         except Exception as e:
             context_msg = f" for {error_context}" if error_context else ""
-            current_delay = min(retry_delay * (2 ** attempt), 60)
+            current_delay = min(retry_delay * (2**attempt), 60)
             print(
                 f"OpenRouter image gen attempt {attempt + 1} failed{context_msg}: {e}. "
                 f"Retrying in {current_delay}s..."
@@ -980,10 +992,10 @@ async def call_model_with_retry_async(
     # Explicit provider prefix overrides auto-detection
     if model_name.startswith("bedrock/"):
         provider = "bedrock"
-        actual_model = model_name[len("bedrock/"):]
+        actual_model = model_name[len("bedrock/") :]
     elif model_name.startswith("openrouter/"):
         provider = "openrouter"
-        actual_model = model_name[len("openrouter/"):]
+        actual_model = model_name[len("openrouter/") :]
     elif model_name.startswith("claude-"):
         provider = "anthropic"
         actual_model = model_name
@@ -1020,10 +1032,16 @@ async def call_model_with_retry_async(
 
     # Convert Gemini GenerateContentConfig -> dict for all other providers
     cfg_dict = {
-        "system_prompt": config.system_instruction if hasattr(config, "system_instruction") else "",
+        "system_prompt": (
+            config.system_instruction if hasattr(config, "system_instruction") else ""
+        ),
         "temperature": config.temperature if hasattr(config, "temperature") else 1.0,
-        "candidate_num": config.candidate_count if hasattr(config, "candidate_count") else 1,
-        "max_completion_tokens": config.max_output_tokens if hasattr(config, "max_output_tokens") else 50000,
+        "candidate_num": (
+            config.candidate_count if hasattr(config, "candidate_count") else 1
+        ),
+        "max_completion_tokens": (
+            config.max_output_tokens if hasattr(config, "max_output_tokens") else 50000
+        ),
     }
 
     if provider == "bedrock":

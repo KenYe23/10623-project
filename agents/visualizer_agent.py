@@ -29,19 +29,19 @@ from .base_agent import BaseAgent
 import os
 
 
-def _aspect_ratio_to_glm_dims(aspect_ratio: str, base: int = 1024) -> tuple:
-    """Convert aspect ratio string (e.g. '3:2') to (width, height) divisible by 32."""
+def _aspect_ratio_to_flux_dims(aspect_ratio: str, base: int = 1024) -> tuple:
+    """Convert aspect ratio string (e.g. '3:2') to (width, height) divisible by 16."""
     try:
         w_ratio, h_ratio = (int(x) for x in aspect_ratio.split(":"))
     except (ValueError, IndexError):
         return base, base
     if w_ratio >= h_ratio:
         w = base
-        h = round(base * h_ratio / w_ratio / 32) * 32
+        h = round(base * h_ratio / w_ratio / 16) * 16
     else:
         h = base
-        w = round(base * w_ratio / h_ratio / 32) * 32
-    return max(w, 32), max(h, 32)
+        w = round(base * w_ratio / h_ratio / 16) * 16
+    return max(w, 16), max(h, 16)
 
 
 def _execute_plot_code_worker(code_text: str) -> str:
@@ -82,7 +82,7 @@ class VisualizerAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        
+
         # Task-specific configurations
         if "plot" in self.exp_config.task_name:
             self.model_name = self.exp_config.main_model_name
@@ -127,7 +127,7 @@ class VisualizerAgent(BaseAgent):
         """
         cfg = self.task_config
         task_name = cfg["task_name"]
-        
+
         desc_keys_to_process = []
         for key in [
             f"target_{task_name}_desc0",
@@ -135,53 +135,66 @@ class VisualizerAgent(BaseAgent):
         ]:
             if key in data and f"{key}_base64_jpg" not in data:
                 desc_keys_to_process.append(key)
-        
+
         for round_idx in range(3):
             key = f"target_{task_name}_critic_desc{round_idx}"
             if key in data and f"{key}_base64_jpg" not in data:
-                critic_suggestions_key = f"target_{task_name}_critic_suggestions{round_idx}"
+                critic_suggestions_key = (
+                    f"target_{task_name}_critic_suggestions{round_idx}"
+                )
                 critic_suggestions = data.get(critic_suggestions_key, "")
-                
+
                 if critic_suggestions.strip() == "No changes needed." and round_idx > 0:
                     # Reuse previous round's base64
-                    prev_base64_key = f"target_{task_name}_critic_desc{round_idx - 1}_base64_jpg"
+                    prev_base64_key = (
+                        f"target_{task_name}_critic_desc{round_idx - 1}_base64_jpg"
+                    )
                     if prev_base64_key in data:
                         data[f"{key}_base64_jpg"] = data[prev_base64_key]
-                        print(f"[Visualizer] Reused base64 from round {round_idx - 1} for {key}")
+                        print(
+                            f"[Visualizer] Reused base64 from round {round_idx - 1} for {key}"
+                        )
                         continue
-                
+
                 desc_keys_to_process.append(key)
-        
+
         if not cfg["use_image_generation"]:
             loop = asyncio.get_running_loop()
-        
+
         for desc_key in desc_keys_to_process:
             prompt_text = cfg["prompt_template"].format(desc=data[desc_key])
             content_list = [{"type": "text", "text": prompt_text}]
-            
+
             gen_config_args = {
                 "system_instruction": self.system_prompt,
                 "temperature": self.exp_config.temperature,
                 "candidate_count": 1,
                 "max_output_tokens": cfg["max_output_tokens"],
             }
-            
+
             # Resolve aspect ratio for image generation
             aspect_ratio = "1:1"
             if "additional_info" in data and "rounded_ratio" in data["additional_info"]:
                 aspect_ratio = data["additional_info"]["rounded_ratio"]
 
             if cfg["use_image_generation"]:
-                if "glm-image" in self.model_name.lower():
-                    glm_url = os.environ.get("GLM_IMAGE_URL", "http://localhost:30000")
-                    w, h = _aspect_ratio_to_glm_dims(aspect_ratio)
-                    response_list = await generation_utils.call_glm_image_with_retry_async(
-                        prompt=prompt_text,
-                        glm_base_url=glm_url,
-                        width=w,
-                        height=h,
-                        max_attempts=5,
-                        retry_delay=30,
+                if (
+                    "flux2" in self.model_name.lower()
+                    or "flux.2" in self.model_name.lower()
+                ):
+                    flux_url = os.environ.get(
+                        "FLUX2_SERVER_URL", "http://localhost:30000"
+                    )
+                    w, h = _aspect_ratio_to_flux_dims(aspect_ratio)
+                    response_list = (
+                        await generation_utils.call_flux2_image_with_retry_async(
+                            prompt=prompt_text,
+                            flux_base_url=flux_url,
+                            width=w,
+                            height=h,
+                            max_attempts=5,
+                            retry_delay=30,
+                        )
                     )
                 elif "gpt-image" in self.model_name:
                     image_config = {
@@ -235,10 +248,10 @@ class VisualizerAgent(BaseAgent):
                     max_attempts=5,
                     retry_delay=30,
                 )
-            
+
             if not response_list or not response_list[0]:
                 continue
-            
+
             # Post-process based on task type
             if cfg["use_image_generation"]:
                 # Convert PNG to JPG
@@ -252,19 +265,24 @@ class VisualizerAgent(BaseAgent):
             else:
                 # Plot: execute generated code
                 raw_code = response_list[0]
-                
-                if not hasattr(self, "process_executor") or self.process_executor is None:
-                    print("Warning: Creating temporary ProcessPoolExecutor. Initialize one in __init__ for better performance.")
+
+                if (
+                    not hasattr(self, "process_executor")
+                    or self.process_executor is None
+                ):
+                    print(
+                        "Warning: Creating temporary ProcessPoolExecutor. Initialize one in __init__ for better performance."
+                    )
                     self.process_executor = ProcessPoolExecutor(max_workers=4)
-                
+
                 base64_jpg = await loop.run_in_executor(
                     self.process_executor, _execute_plot_code_worker, raw_code
                 )
                 data[f"{desc_key}_code"] = raw_code
-                
+
                 if base64_jpg:
                     data[f"{desc_key}_base64_jpg"] = base64_jpg
-        
+
         return data
 
 

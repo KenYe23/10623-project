@@ -17,7 +17,7 @@ Usage:
         --input  results/.../timestamp_dev_full_test.json \
         --round  1 \
         --output results/.../baseline_t1_eval.json \
-        --eval_model_name "bedrock/anthropic.claude-opus-4-6-v1"
+        --eval_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
 
 Does NOT require a GPU — only makes Bedrock API calls for evaluation.
 """
@@ -100,19 +100,39 @@ def main():
     parser = argparse.ArgumentParser(
         description="Re-evaluate a specific critic round from a completed pipeline run."
     )
-    parser.add_argument("--input", type=str, required=True,
-                        help="Path to the completed pipeline result JSON.")
-    parser.add_argument("--round", type=int, required=True,
-                        help="Ablation round to evaluate: 0=initial, 1=after 1 critic round, etc.")
-    parser.add_argument("--output", type=str, default="",
-                        help="Output path (default: <input>_t<round>_eval.json)")
-    parser.add_argument("--task_name", type=str, default="diagram",
-                        help="Task name (default: diagram)")
-    parser.add_argument("--eval_model_name", type=str,
-                        default="bedrock/anthropic.claude-opus-4-6-v1",
-                        help="Model to use for evaluation (default: Bedrock Claude Opus 4.6)")
-    parser.add_argument("--max_concurrent", type=int, default=10,
-                        help="Max concurrent evaluation calls (default: 10)")
+    parser.add_argument(
+        "--input",
+        type=str,
+        required=True,
+        help="Path to the completed pipeline result JSON.",
+    )
+    parser.add_argument(
+        "--round",
+        type=int,
+        required=True,
+        help="Ablation round to evaluate: 0=initial, 1=after 1 critic round, etc.",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="",
+        help="Output path (default: <input>_t<round>_eval.json)",
+    )
+    parser.add_argument(
+        "--task_name", type=str, default="diagram", help="Task name (default: diagram)"
+    )
+    parser.add_argument(
+        "--eval_model_name",
+        type=str,
+        default="bedrock/global.anthropic.claude-sonnet-4-6",
+        help="Model to use for evaluation (default: Bedrock Claude Sonnet 4.6)",
+    )
+    parser.add_argument(
+        "--max_concurrent",
+        type=int,
+        default=10,
+        help="Max concurrent evaluation calls (default: 10)",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -120,8 +140,11 @@ def main():
         print(f"ERROR: Input file not found: {input_path}")
         sys.exit(1)
 
-    output_path = Path(args.output) if args.output else \
-        input_path.with_name(f"{input_path.stem}_t{args.round}_eval.json")
+    output_path = (
+        Path(args.output)
+        if args.output
+        else input_path.with_name(f"{input_path.stem}_t{args.round}_eval.json")
+    )
 
     work_dir = Path(__file__).resolve().parent.parent
 
@@ -136,14 +159,16 @@ def main():
 
     print(f"Loaded {len(data_list)} samples.")
 
-    results = asyncio.run(evaluate_round(
-        data_list=data_list,
-        round_num=args.round,
-        task_name=args.task_name,
-        eval_model_name=args.eval_model_name,
-        work_dir=work_dir,
-        max_concurrent=args.max_concurrent,
-    ))
+    results = asyncio.run(
+        evaluate_round(
+            data_list=data_list,
+            round_num=args.round,
+            task_name=args.task_name,
+            eval_model_name=args.eval_model_name,
+            work_dir=work_dir,
+            max_concurrent=args.max_concurrent,
+        )
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -160,9 +185,11 @@ def main():
         model = outcomes.count("Model")
         human = outcomes.count("Human")
         tie = total - model - human
-        print(f"  {dim:15s}  Model: {model:3d} ({100*model/total:.1f}%)  "
-              f"Tie: {tie:3d} ({100*tie/total:.1f}%)  "
-              f"Human: {human:3d} ({100*human/total:.1f}%)")
+        print(
+            f"  {dim:15s}  Model: {model:3d} ({100*model/total:.1f}%)  "
+            f"Tie: {tie:3d} ({100*tie/total:.1f}%)  "
+            f"Human: {human:3d} ({100*human/total:.1f}%)"
+        )
 
     print(f"\nResults saved to {output_path}")
 

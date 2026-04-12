@@ -23,30 +23,25 @@ mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE" \
 module load anaconda3 cuda gcc/13.3.1-p20240614
 conda activate paperbanana        # adjust if your env name differs
 
-# Export compilers for SGLang CUDA kernel compilation
-export CC=$(which gcc)
-export CXX=$(which g++)
-export CUDAHOSTCXX=$CXX
-
 # ── Credentials ──
 export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:?Set AWS_BEARER_TOKEN_BEDROCK}"
 export AWS_BEDROCK_REGION="${AWS_BEDROCK_REGION:-us-east-1}"
-export GLM_IMAGE_URL="http://localhost:30000"
+export FLUX2_SERVER_URL="http://localhost:30000"
 
-# ── 1. Start GLM-Image server ──
-echo "[$(date)] Starting GLM-Image server..."
-sglang serve --model-path zai-org/GLM-Image --port 30000 &
-GLM_PID=$!
+# ── 1. Start FLUX2 server ──
+echo "[$(date)] Starting FLUX2 server..."
+python scripts/flux2_http_server.py --port 30000 &
+FLUX_PID=$!
 
 # Wait for server readiness (up to 10 min)
 for i in $(seq 1 60); do
     if curl -s http://localhost:30000/v1/models > /dev/null 2>&1; then
-        echo "[$(date)] GLM-Image server ready after $((i * 10))s"
+        echo "[$(date)] FLUX2 server ready after $((i * 10))s"
         break
     fi
     if [ "$i" -eq 60 ]; then
-        echo "ERROR: GLM-Image server did not start within 10 minutes."
-        kill $GLM_PID 2>/dev/null
+        echo "ERROR: FLUX2 server did not start within 10 minutes."
+        kill $FLUX_PID 2>/dev/null
         exit 1
     fi
     sleep 10
@@ -60,11 +55,11 @@ python main.py \
     --exp_mode dev_parallel_debate \
     --retrieval_setting auto \
     --max_critic_rounds 3 \
-    --main_model_name "bedrock/global.anthropic.claude-opus-4-6-v1" \
-    --image_gen_model_name "glm-image" \
+    --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
+    --image_gen_model_name "flux2-dev" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b" \
     --resume
 
 # ── 3. Cleanup ──
-kill $GLM_PID 2>/dev/null
+kill $FLUX_PID 2>/dev/null
 echo "[$(date)] Done."
