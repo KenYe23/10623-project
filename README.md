@@ -39,13 +39,12 @@ Run these steps in order. Steps 1-6 are usually one-time per environment, while 
 
 ### 1. PSC Storage Configuration
 
-Run this once on the PSC login node to automatically set up storage redirects every time you log in:
+Run this on the PSC login node and add it to your shell startup file (`~/.bashrc`) so it is available every login:
 
 ```bash
 # Storage Redirects for PaperBanana (25GB Quota Fix)
 export HF_HOME=$PROJECT/hf_cache
 export HF_HUB_CACHE=$HF_HOME/hub
-export TRANSFORMERS_CACHE=$HF_HOME/transformers
 export XDG_CACHE_HOME=$PROJECT/.cache
 export HF_HUB_DISABLE_XET=1
 ```
@@ -60,6 +59,7 @@ git clone https://github.com/KenYe23/10623-project.git PaperBanana
 ### 3. Create Environment
 
 ```bash
+module load anaconda3
 conda create -n paperbanana python=3.12 -y
 conda activate paperbanana
 
@@ -100,11 +100,12 @@ hf auth whoami
 
 ### 5. Pre-download FLUX.2-dev Weights
 
-Run this in an interactive session on a compute node (the download is ~30 GB):
+Run this in an interactive session on a compute node (download is large; plan for >50 GB):
 
 ```bash
-mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$XDG_CACHE_HOME"
-pip install accelerate
+mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$XDG_CACHE_HOME"
+pip install hf_transfer
+export HF_HUB_ENABLE_HF_TRANSFER=1
 hf download black-forest-labs/FLUX.2-dev --local-dir $PROJECT/models/FLUX.2-dev
 ```
 
@@ -164,13 +165,17 @@ To verify the pipeline works end-to-end before submitting full Slurm jobs, reque
 # Request an interactive H100 80GB node (1 hour limit)
 srun --partition=GPU-shared --gres=gpu:h100-80:1 --time=1:00:00 --pty bash
 
-# Activate environment and load compilers
-module load anaconda3 cuda gcc/13.3.1-p20240614
+# Activate environment
+module load anaconda3
 conda activate paperbanana
 cd $PROJECT/PaperBanana
 
-# Start FLUX.2-dev server in background
-python scripts/flux2_http_server.py --port 30000 &
+# Start FLUX.2-dev server in background and wait for health check
+python scripts/flux2_http_server.py --port 30000 > flux_server.log 2>&1 &
+until curl -sf http://localhost:30000/health > /dev/null; do
+    echo "waiting for FLUX server..."
+    sleep 5
+done
 
 # Run 1-sample smoke test
 python main.py \
@@ -179,6 +184,8 @@ python main.py \
     --split_name test \
     --exp_mode dev_parallel_debate \
     --max_critic_rounds 1 \
+    --max_samples 1 \
+    --max_concurrent 1 \
     --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
     --image_gen_model_name "flux2-dev" \
     --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
@@ -226,6 +233,8 @@ python main.py [OPTIONS]
 | `--exp_mode` | `dev` | Pipeline mode (see below) |
 | `--retrieval_setting` | `auto` | `auto`, `manual`, `random`, `none` |
 | `--max_critic_rounds` | `3` | Max critique-refinement iterations |
+| `--max_samples` | `0` | Limit number of samples processed (`0` = all) |
+| `--max_concurrent` | `10` | Max number of samples processed concurrently |
 | `--main_model_name` | *(from config)* | Main VLM model (e.g. `bedrock/global.anthropic.claude-sonnet-4-6`) |
 | `--image_gen_model_name` | *(from config)* | Image generation model (e.g. `flux2-dev`) |
 | `--critic_b_model_name` | `""` | Second critic for parallel debate (e.g. `bedrock/qwen.qwen3-vl-235b-a22b`) |

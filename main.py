@@ -81,13 +81,13 @@ async def main():
         "--main_model_name",
         type=str,
         default="",
-        help="main model name to use (default: "")",
+        help="main model name to use (default: " ")",
     )
     parser.add_argument(
         "--image_gen_model_name",
         type=str,
         default="",
-        help="image generation model name to use (default: "")",
+        help="image generation model name to use (default: " ")",
     )
     parser.add_argument(
         "--critic_b_model_name",
@@ -100,6 +100,18 @@ async def main():
         action="store_true",
         default=False,
         help="resume from previous run, skipping already-processed samples",
+    )
+    parser.add_argument(
+        "--max_samples",
+        type=int,
+        default=0,
+        help="limit number of samples to process (0 = all)",
+    )
+    parser.add_argument(
+        "--max_concurrent",
+        type=int,
+        default=10,
+        help="maximum number of samples processed concurrently",
     )
     args = parser.parse_args()
 
@@ -115,11 +127,11 @@ async def main():
         critic_b_model_name=args.critic_b_model_name,
         work_dir=Path(__file__).parent,
     )
-    
+
     base_path = Path(__file__).parent / "data" / exp_config.dataset_name
     input_filename = base_path / exp_config.task_name / f"{exp_config.split_name}.json"
     output_filename = exp_config.result_dir / f"{exp_config.exp_name}.json"
-    
+
     print(f"Input file: {input_filename}", f"Output file: {output_filename}")
     with open(input_filename, "r", encoding="utf-8") as f:
         data_list = json.load(f)
@@ -136,17 +148,32 @@ async def main():
                 for d in existing_results
             }
             data_list = [
-                d for d in data_list
-                if (d.get("candidate_id") or d.get("paper_id") or d.get("id", "")) not in processed_ids
+                d
+                for d in data_list
+                if (d.get("candidate_id") or d.get("paper_id") or d.get("id", ""))
+                not in processed_ids
             ]
-            print(f"[Resume] Loaded {len(existing_results)} existing results. {len(data_list)} samples remaining.")
+            print(
+                f"[Resume] Loaded {len(existing_results)} existing results. {len(data_list)} samples remaining."
+            )
         except (json.JSONDecodeError, Exception) as e:
-            print(f"[Resume] Could not load existing results ({e}). Starting from scratch.")
+            print(
+                f"[Resume] Could not load existing results ({e}). Starting from scratch."
+            )
             all_result_list = []
 
     if not data_list:
         print("All samples already processed. Nothing to do.")
         return
+
+    # Optional smoke-test cap
+    if args.max_samples > 0:
+        original_len = len(data_list)
+        data_list = data_list[: args.max_samples]
+        print(
+            f"[Sample Cap] Processing first {len(data_list)} samples "
+            f"(from {original_len} remaining samples)."
+        )
 
     # --- Create agents ---
     parallel_critic = None
@@ -171,11 +198,13 @@ async def main():
     )
 
     # Batch process documents
-    concurrent_num = 10
+    concurrent_num = max(1, args.max_concurrent)
     print(f"Using max concurrency: {concurrent_num}")
 
     async def save_results_and_scores(current_results):
-        print(f"Incremental saving results (count: {len(current_results)}) to {output_filename}")
+        print(
+            f"Incremental saving results (count: {len(current_results)}) to {output_filename}"
+        )
         async with aiofiles.open(
             output_filename, "w", encoding="utf-8", errors="surrogateescape"
         ) as f:
