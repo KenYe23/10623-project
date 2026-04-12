@@ -75,7 +75,7 @@ python main.py \
     --exp_mode dev_full \
     --retrieval_setting auto \
     --max_critic_rounds 3 \
-    --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
+    --main_model_name "bedrock/qwen.qwen3-vl-235b-a22b" \
     --image_gen_model_name "flux2-dev" \
     --resume
 
