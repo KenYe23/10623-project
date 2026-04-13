@@ -358,7 +358,7 @@ async def call_bedrock_converse_with_retry_async(
     system_prompt = config.get("system_prompt", "")
     temperature = config.get("temperature", 1.0)
     candidate_num = config.get("candidate_num", 1)
-    max_tokens = config.get("max_completion_tokens", 50000)
+    max_tokens = config.get("max_completion_tokens", 8000)
 
     url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/converse"
     headers = {
@@ -377,6 +377,9 @@ async def call_bedrock_converse_with_retry_async(
     }
     if system_prompt:
         payload["system"] = [{"text": system_prompt}]
+        # Add cachePoint after system text for Anthropic models on Bedrock
+        if config.get("use_prompt_caching", False):
+            payload["system"].append({"cachePoint": {"type": "default"}})
 
     response_text_list = []
 
@@ -399,6 +402,16 @@ async def call_bedrock_converse_with_retry_async(
 
             if text_parts:
                 response_text_list.append("\n".join(text_parts))
+                # Log cache stats if available
+                usage = data.get("usage", {})
+                cache_read = usage.get("cacheReadInputTokens", 0)
+                cache_write = usage.get("cacheWriteInputTokens", 0)
+                if cache_read or cache_write:
+                    print(
+                        f"[Bedrock cache] input={usage.get('inputTokens', 0)}, "
+                        f"cache_write={cache_write}, cache_read={cache_read}, "
+                        f"output={usage.get('outputTokens', 0)}"
+                    )
                 break
             else:
                 print(f"[Bedrock] Empty response, retrying...")
@@ -537,6 +550,11 @@ async def call_claude_with_retry_async(
     ASYNC: Call Claude API with asynchronous retry logic.
     This version efficiently handles input size errors by validating and modifying
     the content list once before generating all candidates.
+    
+    When config["use_prompt_caching"] is True, the system prompt is sent as a
+    content block with cache_control={"type": "ephemeral"} so Anthropic caches
+    the (large) static prefix.  Subsequent calls with the same prefix pay only
+    $0.30/1M instead of $3.00/1M for input tokens.
     """
     system_prompt = config["system_prompt"]
     temperature = config["temperature"]
@@ -546,10 +564,23 @@ async def call_claude_with_retry_async(
         if "max_output_tokens" in config
         else config.get("max_completion_tokens", 50000)
     )
+    use_caching = config.get("use_prompt_caching", False)
     response_text_list = []
 
+    # Build system parameter: either a plain string or a list of content blocks
+    # with cache_control for prompt caching.
+    if use_caching:
+        system_param = [
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    else:
+        system_param = system_prompt
+
     # --- Preparation Phase ---
-    # Convert to the Claude-specific format and perform an initial optimistic resize.
     current_contents = contents
 
     # --- Validation and Remediation Phase ---
@@ -557,14 +588,23 @@ async def call_claude_with_retry_async(
     for attempt in range(max_attempts):
         try:
             claude_contents = _convert_to_claude_format(current_contents)
-            # Attempt to generate the very first candidate.
             first_response = await anthropic_client.messages.create(
                 model=model_name,
                 max_tokens=max_output_tokens,
                 temperature=temperature,
                 messages=[{"role": "user", "content": claude_contents}],
-                system=system_prompt,
+                system=system_param,
             )
+            # Log caching stats if available
+            if use_caching and hasattr(first_response, "usage"):
+                u = first_response.usage
+                cache_write = getattr(u, "cache_creation_input_tokens", 0)
+                cache_read = getattr(u, "cache_read_input_tokens", 0)
+                print(
+                    f"[Claude cache] input={u.input_tokens}, "
+                    f"cache_write={cache_write}, cache_read={cache_read}, "
+                    f"output={u.output_tokens}"
+                )
             response_text_list.append(first_response.content[0].text)
             is_input_valid = True
             break
@@ -598,7 +638,7 @@ async def call_claude_with_retry_async(
                 max_tokens=max_output_tokens,
                 temperature=temperature,
                 messages=[{"role": "user", "content": valid_claude_contents}],
-                system=system_prompt,
+                system=system_param,
             )
             for _ in range(remaining_candidates)
         ]

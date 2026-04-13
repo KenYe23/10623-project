@@ -132,9 +132,9 @@ class CriticAgent(BaseAgent):
                 system_instruction=self.system_prompt,
                 temperature=self.exp_config.temperature,
                 candidate_count=1,
-                max_output_tokens=50000,
+                max_output_tokens=8000,
             ),
-            max_attempts=5,
+            max_attempts=3,
             retry_delay=5,
         )
 
@@ -250,4 +250,7 @@ Provide your response strictly in the following JSON format.
     "revised_description": "Insert the fully revised detailed description here, incorporating all your suggestions. If no changes are needed, write 'No changes needed.'",
 }
 ```
+
+**CRITICAL:** Output ONLY the JSON object above. Do NOT include any reasoning, step-by-step analysis, candidate evaluation, or explanation. Your entire response should be the JSON and nothing else.
+
 """

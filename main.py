@@ -90,6 +90,12 @@ async def main():
         help="image generation model name to use (default: " ")",
     )
     parser.add_argument(
+        "--retriever_model_name",
+        type=str,
+        default="",
+        help="model for retriever agent; defaults to main_model_name. Use claude-sonnet-4-6-20250514 for prompt caching.",
+    )
+    parser.add_argument(
         "--critic_b_model_name",
         type=str,
         default="",
@@ -135,6 +141,7 @@ async def main():
         retrieval_setting=args.retrieval_setting,
         max_critic_rounds=args.max_critic_rounds,
         main_model_name=args.main_model_name,
+        retriever_model_name=args.retriever_model_name,
         image_gen_model_name=args.image_gen_model_name,
         critic_b_model_name=args.critic_b_model_name,
         work_dir=Path(__file__).parent,

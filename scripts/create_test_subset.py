@@ -6,7 +6,7 @@ Usage:
     python scripts/create_test_subset.py --task diagram --n 10
     python scripts/create_test_subset.py --task diagram --start 50 --n 50   # samples 51-100
     python scripts/create_test_subset.py --task diagram --start 50 --n 10   # samples 51-60
-    python scripts/create_test_subset.py --task plot --start 0 --n 10
+    python scripts/create_test_subset.py --task diagram --start 0 --n 5
 """
 
 import argparse

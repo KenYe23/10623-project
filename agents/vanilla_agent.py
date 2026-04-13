@@ -124,7 +124,7 @@ class VanillaAgent(BaseAgent):
             "system_instruction": self.system_prompt,
             "temperature": self.exp_config.temperature,
             "candidate_count": 1,
-            "max_output_tokens": 50000,
+            "max_output_tokens": 8000,
         }
         
         aspect_ratio = data["additional_info"]["rounded_ratio"]
@@ -141,7 +141,7 @@ class VanillaAgent(BaseAgent):
                     model_name=self.model_name,
                     prompt=prompt_text[:30000],
                     config=image_config,
-                    max_attempts=5,
+                    max_attempts=3,
                     retry_delay=30,
                 )
             elif generation_utils.openrouter_client is not None:

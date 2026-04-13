@@ -35,6 +35,7 @@ class ExpConfig:
     retrieval_setting: Literal["auto", "manual", "random", "none"] = "auto"
     max_critic_rounds: int = 3
     main_model_name: str = ""
+    retriever_model_name: str = ""  # Separate model for retriever (e.g. claude-sonnet-4-6-20250514 for caching)
     image_gen_model_name: str = ""
     critic_b_model_name: str = ""  # Second critic model for parallel debate mode
     work_dir: Path = Path(__file__).parent.parent
@@ -75,6 +76,14 @@ class ExpConfig:
             time.strftime("%m%d_%H%M") if self.timestamp is None else self.timestamp
         )
         self.exp_name = f"{self.timestamp}_{self.retrieval_setting}ret_{self.exp_mode}_{self.split_name}"
+
+        # Sanitize model names: strip stray quotes that can sneak in from
+        # shell scripts, env vars, or YAML.
+        for attr in ("main_model_name", "retriever_model_name",
+                      "image_gen_model_name", "critic_b_model_name"):
+            val = getattr(self, attr, "")
+            if val:
+                setattr(self, attr, val.strip().strip('"').strip("'"))
 
         # mkdir result_dir if not exists
         self.result_dir = self.work_dir / "results" / f"{self.dataset_name}_{self.task_name}"

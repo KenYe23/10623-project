@@ -197,7 +197,7 @@ def main() -> None:
         default="diffusers/FLUX.2-dev-bnb-4bit",
         help="HuggingFace repo with 4-bit quantized weights",
     )
-    parser.add_argument("--num_steps", type=int, default=50)
+    parser.add_argument("--num_steps", type=int, default=30)
     parser.add_argument("--guidance", type=float, default=4.0)
     parser.add_argument(
         "--no_cpu_offloading",

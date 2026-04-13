@@ -32,8 +32,10 @@ class RetrieverAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.model_name = self.exp_config.main_model_name
-
+        # Use dedicated retriever model if set, else fall back to main model
+        raw = self.exp_config.retriever_model_name or self.exp_config.main_model_name
+        self.model_name = raw.strip().strip('"').strip("'")
+        
         # Task-specific configurations
         if self.exp_config.task_name == "plot":
             self.system_prompt = PLOT_RETRIEVER_AGENT_SYSTEM_PROMPT
@@ -160,52 +162,98 @@ class RetrieverAgent(BaseAgent):
         return random.sample(id_list, sample_size) if sample_size > 0 else []
 
     async def _retrieve_and_parse(self, data: Dict[str, Any], cfg: dict) -> list:
-        """Call retrieval model and parse results"""
+        """Call retrieval model and parse results.
+        
+        For Anthropic models (claude-*), the candidate pool is placed in the
+        system prompt so it gets cached across calls ($0.30/1M vs $3.00/1M).
+        For other providers, candidate pool goes in the user message as before.
+        """
         content = str(data["content"])
         visual_intent = data["visual_intent"]
-
-        user_prompt = f"**Target Input**\n- {cfg['target_labels'][0]}: {visual_intent}\n- {cfg['target_labels'][1]}: {content}\n\n**Candidate Pool**\n"
-
-        with open(
-            self.exp_config.work_dir
-            / f"data/PaperBananaBench/{cfg['task_name']}/ref.json",
-            "r",
-            encoding="utf-8",
-        ) as f:
+        
+        # Build candidate pool text
+        with open(self.exp_config.work_dir / f"data/PaperBananaBench/{cfg['task_name']}/ref.json", "r", encoding="utf-8") as f:
             candidate_pool = json.load(f)
             if cfg["ref_limit"]:
-                candidate_pool = candidate_pool[: cfg["ref_limit"]]
-
+                candidate_pool = candidate_pool[:cfg["ref_limit"]]
+        
+        pool_text = "**Candidate Pool**\n"
         for idx, item in enumerate(candidate_pool):
-            user_prompt += f"Candidate {cfg['candidate_type']} {idx+1}:\n"
-            user_prompt += f"- {cfg['candidate_labels'][0]}: {item['id']}\n"
-            user_prompt += f"- {cfg['candidate_labels'][1]}: {item['visual_intent']}\n"
-            user_prompt += f"- {cfg['candidate_labels'][2]}: {str(item['content'])}\n\n"
-
-        user_prompt += f"Now, based on the Target Input and the Candidate Pool, {cfg['instruction_suffix']}"
-        content_list = [{"type": "text", "text": user_prompt}]
-
-        response_list = await generation_utils.call_model_with_retry_async(
-            model_name=self.model_name,
-            contents=content_list,
-            config=types.GenerateContentConfig(
-                system_instruction=self.system_prompt,
-                temperature=self.exp_config.temperature,
-                candidate_count=1,
-                max_output_tokens=50000,
-            ),
-            max_attempts=5,
-            retry_delay=30,
-        )
-
-        # Parse the retrieval result (migrated from get_references.py)
+            pool_text += f"Candidate {cfg['candidate_type']} {idx+1}:\n"
+            pool_text += f"- {cfg['candidate_labels'][0]}: {item['id']}\n"
+            pool_text += f"- {cfg['candidate_labels'][1]}: {item['visual_intent']}\n"
+            pool_text += f"- {cfg['candidate_labels'][2]}: {str(item['content'])}\n\n"
+        
+        target_text = f"**Target Input**\n- {cfg['target_labels'][0]}: {visual_intent}\n- {cfg['target_labels'][1]}: {content}"
+        instruction_text = f"\n\nNow, based on the Target Input and the Candidate Pool, {cfg['instruction_suffix']}"
+        
+        is_anthropic_cacheable = (self.model_name.startswith("bedrock/") and "anthropic" in self.model_name)
+        if is_anthropic_cacheable:
+            # --- Anthropic path: candidate pool in system prompt for caching ---
+            # System = instructions + candidate pool (static, cached after 1st call)
+            # User = target input only (varies per call)
+            system_with_pool = self.system_prompt + "\n\n" + pool_text
+            user_prompt = target_text + instruction_text
+            content_list = [{"type": "text", "text": user_prompt}]
+            
+            if self.model_name.startswith("bedrock/"):
+                # Bedrock path: use Converse API with cachePoint
+                response_list = await generation_utils.call_bedrock_converse_with_retry_async(
+                    model_id=self.model_name[len("bedrock/"):],
+                    contents=content_list,
+                    config={
+                        "system_prompt": system_with_pool,
+                        "temperature": self.exp_config.temperature,
+                        "candidate_num": 1,
+                        "max_completion_tokens": 8000,
+                        "use_prompt_caching": True,
+                    },
+                    max_attempts=3,
+                    retry_delay=30,
+                )
+        elif self.model_name.startswith("bedrock/"):
+            # --- Non-Anthropic Bedrock models (e.g. Qwen): no caching ---
+            user_prompt = target_text + "\n\n" + pool_text + instruction_text
+            content_list = [{"type": "text", "text": user_prompt}]
+            
+            response_list = await generation_utils.call_bedrock_converse_with_retry_async(
+                model_id=self.model_name[len("bedrock/"):],
+                contents=content_list,
+                config={
+                    "system_prompt": self.system_prompt,
+                    "temperature": self.exp_config.temperature,
+                    "candidate_num": 1,
+                    "max_completion_tokens": 8000,
+                },
+                max_attempts=3,
+                retry_delay=30,
+            )
+        else:
+            # --- Other providers (Gemini, etc.): everything in user message ---
+            user_prompt = target_text + "\n\n" + pool_text + instruction_text
+            content_list = [{"type": "text", "text": user_prompt}]
+            
+            response_list = await generation_utils.call_model_with_retry_async(
+                model_name=self.model_name,
+                contents=content_list,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_prompt,
+                    temperature=self.exp_config.temperature,
+                    candidate_count=1,
+                    max_output_tokens=8000,
+                ),
+                max_attempts=3,
+                retry_delay=30,
+            )
+        
+        # Parse the retrieval result
         raw_response = response_list[0].strip()
         return self._parse_retrieval_result(raw_response, cfg["task_name"])
 
     def _parse_retrieval_result(self, raw_response: str, task_name: str) -> list:
         """
         Parse retrieval result string into list of reference IDs.
-        Migrated from get_references.py logic.
+        Handles both {"top10_diagrams": [...]} and bare [...] formats.
         """
         import json_repair
 

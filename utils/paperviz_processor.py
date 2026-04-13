@@ -232,15 +232,45 @@ class PaperVizProcessor:
         needs_retrieval = exp_mode not in ("vanilla", "dev_polish", "dev_retriever")
 
         if needs_retrieval and data_list:
-            print("[Retriever] Running retrieval once for all candidates...")
-            first_data = data_list[0]
-            first_data = await self.retriever_agent.process(first_data, retrieval_setting=retrieval_setting)
-            retrieval_keys = ("top10_references", "retrieved_examples")
-            for data in data_list[1:]:
-                for key in retrieval_keys:
-                    if key in first_data:
-                        data[key] = first_data[key]
-            print(f"[Retriever] Done. Retrieved {len(first_data.get('top10_references', []))} references.")
+            is_per_sample = retrieval_setting == "auto" and (
+                self.retriever_agent.model_name.startswith("claude-")
+                or (self.retriever_agent.model_name.startswith("bedrock/") and "anthropic" in self.retriever_agent.model_name)
+            )
+            if is_per_sample:
+                # Per-sample retrieval: run all retriever calls upfront in a burst
+                # so Anthropic prompt caching stays warm (5-min TTL).
+                print(f"[Retriever] Running per-sample retrieval for {len(data_list)} samples (with prompt caching)...")
+                sem = asyncio.Semaphore(5)  # limit concurrency to avoid rate limits
+
+                async def _retrieve_one(d):
+                    async with sem:
+                        return await self.retriever_agent.process(dict(d), retrieval_setting=retrieval_setting)
+
+                retrieval_tasks = [_retrieve_one(d) for d in data_list]
+                retrieval_results = await asyncio.gather(*retrieval_tasks, return_exceptions=True)
+
+                for i, res in enumerate(retrieval_results):
+                    if isinstance(res, Exception):
+                        print(f"[Retriever] Sample {i} failed: {res}. Using empty refs.")
+                        data_list[i]["top10_references"] = []
+                        data_list[i]["retrieved_examples"] = []
+                    else:
+                        data_list[i]["top10_references"] = res.get("top10_references", [])
+                        data_list[i]["retrieved_examples"] = res.get("retrieved_examples", [])
+
+                ok_count = sum(1 for r in retrieval_results if not isinstance(r, Exception))
+                print(f"[Retriever] Done. {ok_count}/{len(data_list)} succeeded.")
+            else:
+                # Original behaviour: run once and share across all candidates
+                print("[Retriever] Running retrieval once for all candidates...")
+                first_data = data_list[0]
+                first_data = await self.retriever_agent.process(first_data, retrieval_setting=retrieval_setting)
+                retrieval_keys = ("top10_references", "retrieved_examples")
+                for data in data_list[1:]:
+                    for key in retrieval_keys:
+                        if key in first_data:
+                            data[key] = first_data[key]
+                print(f"[Retriever] Done. Retrieved {len(first_data.get('top10_references', []))} references.")
 
         semaphore = asyncio.Semaphore(max_concurrent)
         async def process_with_semaphore(doc):
