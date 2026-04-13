@@ -54,6 +54,12 @@ trap cleanup EXIT
 # ── 1. Start FLUX2 server ──
 echo "[$(date)] Starting FLUX2 server..."
 FLUX_SERVER_ARGS="${FLUX_SERVER_ARGS:-}"
+echo "[$(date)] FLUX_SERVER_ARGS='${FLUX_SERVER_ARGS}'"
+if [[ "${FLUX_SERVER_ARGS}" == *"--no_cpu_offloading"* ]] && [[ "${ALLOW_NO_CPU_OFFLOADING:-0}" != "1" ]]; then
+    echo "ERROR: --no_cpu_offloading is blocked by default to prevent H100 OOM during FLUX startup."
+    echo "If you really want it, set ALLOW_NO_CPU_OFFLOADING=1 explicitly."
+    exit 1
+fi
 python -u scripts/flux2_http_server.py --port 30000 ${FLUX_SERVER_ARGS} > logs/sglang_${SLURM_JOB_ID}.log 2>&1 &
 FLUX_PID=$!
 
