@@ -12,6 +12,7 @@ export HF_HOME=$PROJECT/.cache/huggingface
 export TRANSFORMERS_CACHE=$PROJECT/.cache/huggingface/transformers
 export HF_DATASETS_CACHE=$PROJECT/.cache/huggingface/datasets
 export HF_HUB_DISABLE_XET=1
+export HF_HUB_ENABLE_HF_TRANSFER=1
 export CONDA_PKGS_DIRS=$PROJECT/.conda/pkgs
 export CONDA_ENVS_DIRS=$PROJECT/.conda/envs
 export PIP_CACHE_DIR=$PROJECT/.cache/pip
@@ -22,6 +23,17 @@ mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE" \
 # ── Activate environment ──
 module load anaconda3 cuda gcc/13.3.1-p20240614
 conda activate paperbanana        # adjust if your env name differs
+
+# Ensure large Hugging Face files can be fetched by accelerated downloader
+python - <<'PY'
+import importlib.util, sys
+if importlib.util.find_spec("hf_transfer") is None:
+    sys.stderr.write(
+        "ERROR: hf_transfer is not installed in this environment.\n"
+        "Run once on login node: pip install hf_transfer\n"
+    )
+    raise SystemExit(1)
+PY
 
 # ── Credentials ──
 export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:?Set AWS_BEARER_TOKEN_BEDROCK}"

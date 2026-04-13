@@ -12,6 +12,7 @@ export HF_HOME=$PROJECT/hf_cache
 export HF_HUB_CACHE=$HF_HOME/hub
 export XDG_CACHE_HOME=$PROJECT/.cache
 export HF_HUB_DISABLE_XET=1
+export HF_HUB_ENABLE_HF_TRANSFER=1
 mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$XDG_CACHE_HOME" logs
 
 # ── Activate environment ──
@@ -19,6 +20,17 @@ module load anaconda3
 conda activate paperbanana
 module load cuda
 module load gcc/13.3.1-p20240614
+
+# Ensure large Hugging Face files can be fetched by accelerated downloader
+python - <<'PY'
+import importlib.util, sys
+if importlib.util.find_spec("hf_transfer") is None:
+    sys.stderr.write(
+        "ERROR: hf_transfer is not installed in this environment.\n"
+        "Run once on login node: pip install hf_transfer\n"
+    )
+    raise SystemExit(1)
+PY
 
 # Export compilers for SGLang CUDA kernel compilation
 export CC=$(which gcc)
