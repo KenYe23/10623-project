@@ -5,14 +5,14 @@
 ## Architecture
 
 ```
-Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Claude Sonnet 4.6)  ─→ Synthesizer (Claude Sonnet 4.6) → Visualizer → …
-                                             └─→ Critic B (Qwen3-VL-235B)   ─↗
+Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Qwen3-VL-235B)  ─→ Synthesizer (Qwen3-VL-235B) → Visualizer → …
+                                             └─→ Critic B (Claude Sonnet 4.6)   ─↗
 ```
 
 | Role | Model | Provider |
 |------|-------|----------|
-| Planner, Stylist, Synthesizer, Critic A | Claude Sonnet 4.6 | AWS Bedrock |
-| Critic B | Qwen3-VL-235B-A22B | AWS Bedrock |
+| Planner, Stylist, Synthesizer, Critic A | Qwen3-VL-235B-A22B | AWS Bedrock |
+| Critic B | Claude Sonnet 4.6 | AWS Bedrock |
 | Visualizer (image gen) | FLUX.2-dev | Self-hosted (local HTTP server on H100) |
 
 **Key files:**
@@ -186,9 +186,9 @@ python main.py \
     --max_critic_rounds 1 \
     --max_samples 1 \
     --max_concurrent 1 \
-    --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
+    --main_model_name "bedrock/qwen.qwen3-vl-235b-a22b" \
     --image_gen_model_name "flux2-dev" \
-    --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
+    --critic_b_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
 ```
 
 ### Full Runs via Slurm
@@ -206,18 +206,23 @@ sbatch scripts/run_combined_baseline.sh
 sbatch scripts/run_combined_parallel.sh
 ```
 
-### Wall-Time Resumption
+### Sharding the 292 test samples
 
-PSC jobs on the `GPU-shared` partition have a maximum 48-hour wall time. For runs that you suspect might take even longer, you can chain jobs for automatic resumption:
+You can run disjoint index ranges with `START_IDX` (inclusive) and `END_IDX` (exclusive).
+
+Example shard `[0, 50)`:
 
 ```bash
-JOB1=$(sbatch --parsable scripts/run_combined_parallel.sh)
-sbatch --dependency=afterany:$JOB1 scripts/run_combined_parallel.sh
+START_IDX=0 END_IDX=50 SPLIT_NAME=test MAX_CONCURRENT=6 sbatch scripts/run_combined_parallel.sh
 ```
 
-Both scripts pass `--resume`, which loads existing results from the output JSON and skips already-processed sample IDs.
+After all shard jobs finish, merge outputs:
 
----
+```bash
+python scripts/merge_shard_results.py \
+    --inputs results/PaperBananaBench_diagram/*dev_parallel_debate_test*.json \
+    --output results/PaperBananaBench_diagram/merged_dev_parallel_debate_test.json
+```
 
 ## CLI Reference
 
@@ -234,10 +239,12 @@ python main.py [OPTIONS]
 | `--retrieval_setting` | `auto` | `auto`, `manual`, `random`, `none` |
 | `--max_critic_rounds` | `3` | Max critique-refinement iterations |
 | `--max_samples` | `0` | Limit number of samples processed (`0` = all) |
+| `--start_idx` | `0` | Start index (inclusive) for shard processing |
+| `--end_idx` | `-1` | End index (exclusive) for shard processing (`-1` = end) |
 | `--max_concurrent` | `10` | Max number of samples processed concurrently |
-| `--main_model_name` | *(from config)* | Main VLM model (e.g. `bedrock/global.anthropic.claude-sonnet-4-6`) |
+| `--main_model_name` | *(from config)* | Main VLM model (e.g. `bedrock/qwen.qwen3-vl-235b-a22b`) |
 | `--image_gen_model_name` | *(from config)* | Image generation model (e.g. `flux2-dev`) |
-| `--critic_b_model_name` | `""` | Second critic for parallel debate (e.g. `bedrock/qwen.qwen3-vl-235b-a22b`) |
+| `--critic_b_model_name` | `""` | Second critic for parallel debate (e.g. `bedrock/global.anthropic.claude-sonnet-4-6`) |
 | `--resume` | `false` | Skip already-processed samples |
 
 ### Experiment Modes

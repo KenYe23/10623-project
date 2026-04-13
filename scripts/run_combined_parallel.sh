@@ -48,17 +48,37 @@ for i in $(seq 1 60); do
 done
 
 # ── 2. Run parallel debate pipeline ──
-python main.py \
-    --dataset_name PaperBananaBench \
-    --task_name diagram \
-    --split_name test \
-    --exp_mode dev_parallel_debate \
-    --retrieval_setting auto \
-    --max_critic_rounds 3 \
-    --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
-    --image_gen_model_name "flux2-dev" \
-    --critic_b_model_name "bedrock/qwen.qwen3-vl-235b-a22b" \
+SPLIT_NAME="${SPLIT_NAME:-test}"
+MAX_CONCURRENT="${MAX_CONCURRENT:-10}"
+
+MAIN_ARGS=(
+    --dataset_name PaperBananaBench
+    --task_name diagram
+    --split_name "$SPLIT_NAME"
+    --exp_mode dev_parallel_debate
+    --retrieval_setting auto
+    --max_critic_rounds 3
+    --max_concurrent "$MAX_CONCURRENT"
+    --main_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
+    --image_gen_model_name "flux2-dev"
+    --critic_b_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
     --resume
+)
+
+# Optional shard slicing by index range
+if [[ -n "${START_IDX:-}" ]]; then
+    MAIN_ARGS+=(--start_idx "$START_IDX")
+fi
+if [[ -n "${END_IDX:-}" ]]; then
+    MAIN_ARGS+=(--end_idx "$END_IDX")
+fi
+
+# Optional hard sample cap for smoke tests
+if [[ -n "${MAX_SAMPLES:-}" ]]; then
+    MAIN_ARGS+=(--max_samples "$MAX_SAMPLES")
+fi
+
+python main.py "${MAIN_ARGS[@]}"
 
 # ── 3. Cleanup ──
 kill $FLUX_PID 2>/dev/null

@@ -17,7 +17,7 @@ Usage:
         --input  results/.../timestamp_dev_full_test.json \
         --round  1 \
         --output results/.../baseline_t1_eval.json \
-        --eval_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
+        --eval_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
 
 Does NOT require a GPU — only makes Bedrock API calls for evaluation.
 """
@@ -124,8 +124,8 @@ def main():
     parser.add_argument(
         "--eval_model_name",
         type=str,
-        default="bedrock/global.anthropic.claude-sonnet-4-6",
-        help="Model to use for evaluation (default: Bedrock Claude Sonnet 4.6)",
+        default="bedrock/qwen.qwen3-vl-235b-a22b",
+        help="Model to use for evaluation (default: Bedrock Qwen3-VL-235B-A22B)",
     )
     parser.add_argument(
         "--max_concurrent",

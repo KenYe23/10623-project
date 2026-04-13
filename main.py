@@ -108,6 +108,18 @@ async def main():
         help="limit number of samples to process (0 = all)",
     )
     parser.add_argument(
+        "--start_idx",
+        type=int,
+        default=0,
+        help="start index (inclusive) for sharding samples (default: 0)",
+    )
+    parser.add_argument(
+        "--end_idx",
+        type=int,
+        default=-1,
+        help="end index (exclusive) for sharding samples; -1 means until end",
+    )
+    parser.add_argument(
         "--max_concurrent",
         type=int,
         default=10,
@@ -135,6 +147,24 @@ async def main():
     print(f"Input file: {input_filename}", f"Output file: {output_filename}")
     with open(input_filename, "r", encoding="utf-8") as f:
         data_list = json.load(f)
+
+    # Optional shard selection by index range
+    total_before_slice = len(data_list)
+    start_idx = max(0, args.start_idx)
+    end_idx = args.end_idx if args.end_idx and args.end_idx > 0 else total_before_slice
+    end_idx = min(end_idx, total_before_slice)
+    if start_idx >= end_idx:
+        print(
+            f"Invalid shard range: start_idx={start_idx}, end_idx={end_idx}, "
+            f"total={total_before_slice}. Nothing to process."
+        )
+        return
+    if start_idx != 0 or end_idx != total_before_slice:
+        data_list = data_list[start_idx:end_idx]
+        print(
+            f"[Shard] Selected index range [{start_idx}, {end_idx}) "
+            f"=> {len(data_list)} samples (from {total_before_slice})."
+        )
 
     # --- Resume logic: skip already-processed samples ---
     all_result_list = []
