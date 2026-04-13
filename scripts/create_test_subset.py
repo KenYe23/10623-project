@@ -1,10 +1,12 @@
 """
-Create a small test subset (first N samples) for sanity-checking the pipeline.
+Create a test subset for sanity-checking the pipeline.
 Outputs: data/PaperBananaBench/{task}/test_mini.json
 
 Usage:
-    python scripts/create_test_subset.py --task diagram --n 100
-    python scripts/create_test_subset.py --task plot --n 10
+    python scripts/create_test_subset.py --task diagram --n 10
+    python scripts/create_test_subset.py --task diagram --start 50 --n 50   # samples 51-100
+    python scripts/create_test_subset.py --task diagram --start 50 --n 10   # samples 51-60
+    python scripts/create_test_subset.py --task plot --start 0 --n 10
 """
 
 import argparse
@@ -15,7 +17,9 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", type=str, default="diagram", choices=["diagram", "plot"])
+    parser.add_argument("--start", type=int, default=0, help="Start index (0-based)")
     parser.add_argument("--n", type=int, default=10, help="Number of samples to include")
+    parser.add_argument("--name", type=str, default="", help="Custom output name (default: test_mini)")
     args = parser.parse_args()
 
     data_dir = Path(__file__).resolve().parent.parent / "data" / "PaperBananaBench" / args.task
@@ -25,7 +29,8 @@ def main():
     with open(test_path, "r", encoding="utf-8") as f:
         test_data = json.load(f)
 
-    subset = test_data[: args.n]
+    end = args.start + args.n
+    subset = test_data[args.start:end]
 
     # Verify GT images exist
     missing = []
@@ -40,11 +45,12 @@ def main():
             print(f"  {m}")
 
     # Write subset
-    out_path = data_dir / "test_mini100.json"
+    out_name = args.name if args.name else f"test_mini_{args.start + 1}_{end}"
+    out_path = data_dir / f"{out_name}.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(subset, f, ensure_ascii=False, indent=2)
 
-    print(f"Created {out_path} with {len(subset)} samples (from {len(test_data)} total)")
+    print(f"Created {out_path} with {len(subset)} samples (indices {args.start}-{end - 1}, from {len(test_data)} total)")
 
 
 if __name__ == "__main__":
