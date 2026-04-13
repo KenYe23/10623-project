@@ -80,6 +80,7 @@ def get_config_val(section, key, env_var, default=""):
 # Reuse core helpers from demo.py
 # ---------------------------------------------------------------------------
 
+
 def clean_text(text):
     if not text:
         return text
@@ -99,7 +100,9 @@ def base64_to_image(b64_str):
         return None
 
 
-def create_sample_inputs(method_content, caption, aspect_ratio="16:9", num_copies=10, max_critic_rounds=3):
+def create_sample_inputs(
+    method_content, caption, aspect_ratio="16:9", num_copies=10, max_critic_rounds=3
+):
     base_input = {
         "filename": "demo_input",
         "caption": caption,
@@ -118,8 +121,11 @@ def create_sample_inputs(method_content, caption, aspect_ratio="16:9", num_copie
 
 
 async def process_parallel_candidates(
-    data_list, exp_mode="dev_planner_critic", retrieval_setting="auto",
-    main_model_name="", image_gen_model_name="",
+    data_list,
+    exp_mode="dev_planner_critic",
+    retrieval_setting="auto",
+    main_model_name="",
+    image_gen_model_name="",
 ):
     exp_config = config.ExpConfig(
         dataset_name="Demo",
@@ -141,34 +147,65 @@ async def process_parallel_candidates(
         polish_agent=PolishAgent(exp_config=exp_config),
     )
     results = []
-    async for result_data in processor.process_queries_batch(data_list, max_concurrent=10, do_eval=False):
+    async for result_data in processor.process_queries_batch(
+        data_list, max_concurrent=10, do_eval=False
+    ):
         results.append(result_data)
     return results
 
 
-async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9", image_size="2K"):
-    image_model = get_config_val("defaults", "image_gen_model_name", "IMAGE_GEN_MODEL_NAME", "")
+async def refine_image_with_nanoviz(
+    image_bytes, edit_prompt, aspect_ratio="21:9", image_size="2K"
+):
+    image_model = get_config_val(
+        "defaults", "image_gen_model_name", "IMAGE_GEN_MODEL_NAME", ""
+    )
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
     # Path 1: OpenRouter
     try:
-        from utils.generation_utils import call_openrouter_image_generation_with_retry_async
+        from utils.generation_utils import (
+            call_openrouter_image_generation_with_retry_async,
+        )
+
         _has_openrouter = True
     except ImportError:
         _has_openrouter = False
-    openrouter_api_key = get_config_val("api_keys", "openrouter_api_key", "OPENROUTER_API_KEY", "")
+    openrouter_api_key = get_config_val(
+        "api_keys", "openrouter_api_key", "OPENROUTER_API_KEY", ""
+    )
     if _has_openrouter and openrouter_api_key:
         try:
             contents = [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_b64,
+                    },
+                },
                 {"type": "text", "text": edit_prompt},
             ]
-            cfg = {"system_prompt": "", "temperature": 1.0, "aspect_ratio": aspect_ratio, "image_size": image_size}
+            cfg = {
+                "system_prompt": "",
+                "temperature": 1.0,
+                "aspect_ratio": aspect_ratio,
+                "image_size": image_size,
+            }
             result = await call_openrouter_image_generation_with_retry_async(
-                model_name=image_model, contents=contents, config=cfg, max_attempts=3, retry_delay=10, error_context="refine_image",
+                model_name=image_model,
+                contents=contents,
+                config=cfg,
+                max_attempts=3,
+                retry_delay=10,
+                error_context="refine_image",
             )
             if result and result[0] != "Error":
-                return base64.b64decode(result[0]), "Image refined successfully! (via OpenRouter)"
+                return (
+                    base64.b64decode(result[0]),
+                    "Image refined successfully! (via OpenRouter)",
+                )
         except Exception as e:
             print(f"OpenRouter refine failed: {e}, falling back...")
 
@@ -180,13 +217,17 @@ async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9
         return None, "Error: google-genai SDK not installed and OpenRouter unavailable."
 
     google_api_key = get_config_val("api_keys", "google_api_key", "GOOGLE_API_KEY", "")
-    project_id = get_config_val("google_cloud", "project_id", "GOOGLE_CLOUD_PROJECT", "")
+    project_id = get_config_val(
+        "google_cloud", "project_id", "GOOGLE_CLOUD_PROJECT", ""
+    )
 
     if google_api_key:
         client = genai.Client(api_key=google_api_key)
         via = "Google API key"
     elif project_id:
-        location = get_config_val("google_cloud", "location", "GOOGLE_CLOUD_LOCATION", "global")
+        location = get_config_val(
+            "google_cloud", "location", "GOOGLE_CLOUD_LOCATION", "global"
+        )
         client = genai.Client(vertexai=True, project=project_id, location=location)
         via = "Vertex AI"
     else:
@@ -198,11 +239,18 @@ async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9
             types.Part.from_bytes(mime_type="image/jpeg", data=image_bytes),
         ]
         gen_config = types.GenerateContentConfig(
-            temperature=1.0, max_output_tokens=8192, response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio=aspect_ratio, image_size=image_size),
+            temperature=1.0,
+            max_output_tokens=50000,
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(
+                aspect_ratio=aspect_ratio, image_size=image_size
+            ),
         )
         response = await asyncio.to_thread(
-            client.models.generate_content, model=image_model, contents=contents, config=gen_config,
+            client.models.generate_content,
+            model=image_model,
+            contents=contents,
+            config=gen_config,
         )
         if response.candidates and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
@@ -211,7 +259,10 @@ async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9
                     if isinstance(data, bytes):
                         return data, f"Image refined successfully! (via {via})"
                     elif isinstance(data, str):
-                        return base64.b64decode(data), f"Image refined successfully! (via {via})"
+                        return (
+                            base64.b64decode(data),
+                            f"Image refined successfully! (via {via})",
+                        )
         return None, f"No image data found in {via} response"
     except Exception as e:
         return None, f"{via} error: {str(e)}"
@@ -223,23 +274,39 @@ def get_evolution_stages(result, exp_mode):
     # Planner
     k = f"target_{task_name}_desc0_base64_jpg"
     if k in result and result[k]:
-        stages.append({"name": "Planner", "image_key": k, "desc_key": f"target_{task_name}_desc0", "description": "Initial diagram plan"})
+        stages.append(
+            {
+                "name": "Planner",
+                "image_key": k,
+                "desc_key": f"target_{task_name}_desc0",
+                "description": "Initial diagram plan",
+            }
+        )
     # Stylist (demo_full only)
     if exp_mode == "demo_full":
         k = f"target_{task_name}_stylist_desc0_base64_jpg"
         if k in result and result[k]:
-            stages.append({"name": "Stylist", "image_key": k, "desc_key": f"target_{task_name}_stylist_desc0", "description": "Stylistically refined"})
+            stages.append(
+                {
+                    "name": "Stylist",
+                    "image_key": k,
+                    "desc_key": f"target_{task_name}_stylist_desc0",
+                    "description": "Stylistically refined",
+                }
+            )
     # Critic rounds
     for r in range(4):
         k = f"target_{task_name}_critic_desc{r}_base64_jpg"
         if k in result and result[k]:
-            stages.append({
-                "name": f"Critic Round {r}",
-                "image_key": k,
-                "desc_key": f"target_{task_name}_critic_desc{r}",
-                "suggestions_key": f"target_{task_name}_critic_suggestions{r}",
-                "description": f"Refined after critic iteration {r}",
-            })
+            stages.append(
+                {
+                    "name": f"Critic Round {r}",
+                    "image_key": k,
+                    "desc_key": f"target_{task_name}_critic_desc{r}",
+                    "suggestions_key": f"target_{task_name}_critic_suggestions{r}",
+                    "description": f"Refined after critic iteration {r}",
+                }
+            )
     return stages
 
 
@@ -442,10 +509,18 @@ CUSTOM_CSS = """
 # Build the Gradio Blocks UI
 # ---------------------------------------------------------------------------
 
+
 def build_app():
 
-    default_main_model = get_config_val("defaults", "main_model_name", "MAIN_MODEL_NAME", "gemini-3.1-pro-preview")
-    default_image_model = get_config_val("defaults", "image_gen_model_name", "IMAGE_GEN_MODEL_NAME", "gemini-3.1-flash-image-preview")
+    default_main_model = get_config_val(
+        "defaults", "main_model_name", "MAIN_MODEL_NAME", "gemini-3.1-pro-preview"
+    )
+    default_image_model = get_config_val(
+        "defaults",
+        "image_gen_model_name",
+        "IMAGE_GEN_MODEL_NAME",
+        "gemini-3.1-flash-image-preview",
+    )
 
     with gr.Blocks(title="PaperBanana") as app:
         # ---- State to hold results across interactions ----
@@ -457,7 +532,8 @@ def build_app():
         # ================================================================
         # HEADER
         # ================================================================
-        gr.HTML(f"""
+        gr.HTML(
+            f"""
         <div style="background: #fff; border-radius: 16px; padding: 24px 36px; margin-bottom: 16px; width: 100%;
                     display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
                     border: 1px solid #e5e7eb;">
@@ -483,7 +559,8 @@ def build_app():
                 </a>
             </div>
         </div>
-        """)
+        """
+        )
 
         # ================================================================
         # API KEYS ACCORDION
@@ -495,12 +572,20 @@ def build_app():
             )
             with gr.Row():
                 openrouter_key_input = gr.Textbox(
-                    label="OpenRouter API Key (optional)", type="password", placeholder="sk-or-...",
-                    value=get_config_val("api_keys", "openrouter_api_key", "OPENROUTER_API_KEY", ""),
+                    label="OpenRouter API Key (optional)",
+                    type="password",
+                    placeholder="sk-or-...",
+                    value=get_config_val(
+                        "api_keys", "openrouter_api_key", "OPENROUTER_API_KEY", ""
+                    ),
                 )
                 google_key_input = gr.Textbox(
-                    label="Google API Key (optional)", type="password", placeholder="AIza...",
-                    value=get_config_val("api_keys", "google_api_key", "GOOGLE_API_KEY", ""),
+                    label="Google API Key (optional)",
+                    type="password",
+                    placeholder="AIza...",
+                    value=get_config_val(
+                        "api_keys", "google_api_key", "GOOGLE_API_KEY", ""
+                    ),
                 )
             gr.Markdown("*Keys are used only for this session and never stored.*")
 
@@ -510,6 +595,7 @@ def build_app():
                 if g_key:
                     os.environ["GOOGLE_API_KEY"] = g_key
                 from utils.generation_utils import reinitialize_clients
+
                 initialized = reinitialize_clients()
                 if initialized:
                     return f"Clients initialized: {', '.join(initialized)}."
@@ -520,7 +606,11 @@ def build_app():
 
             apply_keys_btn = gr.Button("Apply Keys", size="sm")
             keys_status = gr.Textbox(visible=False)
-            apply_keys_btn.click(apply_keys, inputs=[openrouter_key_input, google_key_input], outputs=[keys_status])
+            apply_keys_btn.click(
+                apply_keys,
+                inputs=[openrouter_key_input, google_key_input],
+                outputs=[keys_status],
+            )
 
         # ================================================================
         # TABS
@@ -533,7 +623,9 @@ def build_app():
             with gr.TabItem("Generate Candidates"):
                 with gr.Row():
                     # ---------- LEFT COLUMN: SETTINGS ----------
-                    with gr.Column(scale=1, min_width=280, elem_classes=["left-settings"]):
+                    with gr.Column(
+                        scale=1, min_width=280, elem_classes=["left-settings"]
+                    ):
                         gr.HTML('<p class="section-label">Settings</p>')
 
                         pipeline_mode = gr.Dropdown(
@@ -545,7 +637,8 @@ def build_app():
                         pipeline_desc = gr.Textbox(
                             label="Pipeline Description",
                             value=PIPELINE_DESCRIPTIONS["demo_full"],
-                            interactive=False, lines=2,
+                            interactive=False,
+                            lines=2,
                         )
                         pipeline_mode.change(
                             lambda m: PIPELINE_DESCRIPTIONS.get(m, ""),
@@ -560,7 +653,10 @@ def build_app():
                             info="How to retrieve reference diagrams",
                         )
                         num_candidates = gr.Number(
-                            value=10, minimum=1, maximum=20, step=1,
+                            value=10,
+                            minimum=1,
+                            maximum=20,
+                            step=1,
                             label="Number of Candidates",
                         )
                         aspect_ratio = gr.Dropdown(
@@ -574,7 +670,10 @@ def build_app():
                             label="Figure Size",
                         )
                         max_critic_rounds = gr.Slider(
-                            minimum=1, maximum=5, value=3, step=1,
+                            minimum=1,
+                            maximum=5,
+                            value=3,
+                            step=1,
                             label="Max Critic Rounds",
                         )
                         main_model_name = gr.Textbox(
@@ -613,36 +712,61 @@ def build_app():
                             method_content = gr.Textbox(
                                 label="Method Content",
                                 value=EXAMPLE_METHOD,
-                                lines=12, max_lines=30,
+                                lines=12,
+                                max_lines=30,
                             )
                             caption_input = gr.Textbox(
                                 label="Figure Caption",
                                 value=EXAMPLE_CAPTION,
-                                lines=12, max_lines=30,
+                                lines=12,
+                                max_lines=30,
                             )
 
                         # Wire example selectors
                         def load_method_example(choice):
-                            return EXAMPLE_METHOD if choice == "PaperBanana Framework" else ""
-                        def load_caption_example(choice):
-                            return EXAMPLE_CAPTION if choice == "PaperBanana Framework" else ""
+                            return (
+                                EXAMPLE_METHOD
+                                if choice == "PaperBanana Framework"
+                                else ""
+                            )
 
-                        method_example.change(load_method_example, inputs=[method_example], outputs=[method_content])
-                        caption_example.change(load_caption_example, inputs=[caption_example], outputs=[caption_input])
+                        def load_caption_example(choice):
+                            return (
+                                EXAMPLE_CAPTION
+                                if choice == "PaperBanana Framework"
+                                else ""
+                            )
+
+                        method_example.change(
+                            load_method_example,
+                            inputs=[method_example],
+                            outputs=[method_content],
+                        )
+                        caption_example.change(
+                            load_caption_example,
+                            inputs=[caption_example],
+                            outputs=[caption_input],
+                        )
 
                         generate_btn = gr.Button(
-                            "✨ Generate Candidates", variant="primary",
-                            elem_classes=["orange-btn"], size="lg",
+                            "✨ Generate Candidates",
+                            variant="primary",
+                            elem_classes=["orange-btn"],
+                            size="lg",
                         )
 
                 # ---- Status ----
                 status_text = gr.Textbox(label="Status", interactive=False, lines=1)
 
                 # ---- Results ----
-                gr.HTML('<p class="section-label" style="margin-top:16px;">Generated Candidates</p>')
+                gr.HTML(
+                    '<p class="section-label" style="margin-top:16px;">Generated Candidates</p>'
+                )
                 results_gallery = gr.Gallery(
                     label="Generated Candidates",
-                    columns=3, height="auto", object_fit="contain",
+                    columns=3,
+                    height="auto",
+                    object_fit="contain",
                 )
                 with gr.Accordion("Evolution Timeline", open=False):
                     evolution_html = gr.HTML("")
@@ -651,13 +775,23 @@ def build_app():
 
                 # ---- Generate handler ----
                 def run_generate(
-                    method_text, caption_text, pipe_mode, ret_setting,
-                    n_cands, ar, max_rounds, m_model, img_model,
-                    figure_size, save_results,
+                    method_text,
+                    caption_text,
+                    pipe_mode,
+                    ret_setting,
+                    n_cands,
+                    ar,
+                    max_rounds,
+                    m_model,
+                    img_model,
+                    figure_size,
+                    save_results,
                     progress=gr.Progress(track_tqdm=True),
                 ):
                     if not method_text or not caption_text:
-                        raise gr.Error("Please provide both method content and caption.")
+                        raise gr.Error(
+                            "Please provide both method content and caption."
+                        )
 
                     n_cands = int(n_cands)
                     max_rounds = int(max_rounds)
@@ -665,18 +799,26 @@ def build_app():
 
                     progress(0, desc="Preparing inputs...")
                     input_data = create_sample_inputs(
-                        method_content=method_text, caption=caption_text,
-                        aspect_ratio=ar, num_copies=n_cands, max_critic_rounds=max_rounds,
+                        method_content=method_text,
+                        caption=caption_text,
+                        aspect_ratio=ar,
+                        num_copies=n_cands,
+                        max_critic_rounds=max_rounds,
                     )
                     params = {"figure_size": figure_size}
 
-                    progress(0.1, desc=f"Generating {n_cands} candidates in parallel...")
+                    progress(
+                        0.1, desc=f"Generating {n_cands} candidates in parallel..."
+                    )
                     try:
                         loop = asyncio.new_event_loop()
                         results = loop.run_until_complete(
                             process_parallel_candidates(
-                                input_data, exp_mode=pipe_mode, retrieval_setting=ret_setting,
-                                main_model_name=m_model, image_gen_model_name=img_model,
+                                input_data,
+                                exp_mode=pipe_mode,
+                                retrieval_setting=ret_setting,
+                                main_model_name=m_model,
+                                image_gen_model_name=img_model,
                             )
                         )
                         loop.close()
@@ -690,7 +832,12 @@ def build_app():
                     results_dir.mkdir(parents=True, exist_ok=True)
                     json_filename = results_dir / f"demo_{timestamp_str}.json"
                     try:
-                        with open(json_filename, "w", encoding="utf-8", errors="surrogateescape") as f:
+                        with open(
+                            json_filename,
+                            "w",
+                            encoding="utf-8",
+                            errors="surrogateescape",
+                        ) as f:
                             s = json.dumps(results, ensure_ascii=False, indent=4)
                             s = s.encode("utf-8", "ignore").decode("utf-8")
                             f.write(s)
@@ -709,16 +856,27 @@ def build_app():
                     for idx, res in enumerate(results):
                         stages = get_evolution_stages(res, pipe_mode)
                         if stages:
-                            evo_parts.append(f"<h4>Candidate {idx} ({len(stages)} stages)</h4>")
+                            evo_parts.append(
+                                f"<h4>Candidate {idx} ({len(stages)} stages)</h4>"
+                            )
                             for st in stages:
-                                evo_parts.append(f'<span class="evo-stage-title">{st["name"]}</span>: {st["description"]}<br/>')
-                    evo_html = "".join(evo_parts) if evo_parts else "<p>No evolution data available.</p>"
+                                evo_parts.append(
+                                    f'<span class="evo-stage-title">{st["name"]}</span>: {st["description"]}<br/>'
+                                )
+                    evo_html = (
+                        "".join(evo_parts)
+                        if evo_parts
+                        else "<p>No evolution data available.</p>"
+                    )
 
                     # Build ZIP
                     zip_path = None
                     if save_results != "No":
                         try:
-                            zip_filename = results_dir / f"papervizagent_candidates_{timestamp_str}.zip"
+                            zip_filename = (
+                                results_dir
+                                / f"papervizagent_candidates_{timestamp_str}.zip"
+                            )
                             buf = BytesIO()
                             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                                 for idx, res in enumerate(results):
@@ -726,7 +884,9 @@ def build_app():
                                     if img:
                                         ib = BytesIO()
                                         img.save(ib, format="PNG")
-                                        zf.writestr(f"candidate_{idx}.png", ib.getvalue())
+                                        zf.writestr(
+                                            f"candidate_{idx}.png", ib.getvalue()
+                                        )
                             buf.seek(0)
                             with open(zip_filename, "wb") as wf:
                                 wf.write(buf.getvalue())
@@ -740,26 +900,38 @@ def build_app():
 
                     progress(1.0, desc="Done!")
                     return (
-                        gallery_images,       # results_gallery
-                        evo_html,             # evolution_html
-                        zip_path,             # zip_file_output
-                        status,               # status_text
-                        results,              # gen_results_state
-                        pipe_mode,            # gen_mode_state
-                        timestamp_str,        # gen_timestamp_state
+                        gallery_images,  # results_gallery
+                        evo_html,  # evolution_html
+                        zip_path,  # zip_file_output
+                        status,  # status_text
+                        results,  # gen_results_state
+                        pipe_mode,  # gen_mode_state
+                        timestamp_str,  # gen_timestamp_state
                     )
 
                 generate_btn.click(
                     fn=run_generate,
                     inputs=[
-                        method_content, caption_input, pipeline_mode, retrieval_setting,
-                        num_candidates, aspect_ratio, max_critic_rounds,
-                        main_model_name, image_model_name,
-                        figure_size, save_results,
+                        method_content,
+                        caption_input,
+                        pipeline_mode,
+                        retrieval_setting,
+                        num_candidates,
+                        aspect_ratio,
+                        max_critic_rounds,
+                        main_model_name,
+                        image_model_name,
+                        figure_size,
+                        save_results,
                     ],
                     outputs=[
-                        results_gallery, evolution_html, zip_file_output, status_text,
-                        gen_results_state, gen_mode_state, gen_timestamp_state,
+                        results_gallery,
+                        evolution_html,
+                        zip_file_output,
+                        status_text,
+                        gen_results_state,
+                        gen_mode_state,
+                        gen_timestamp_state,
                     ],
                 )
 
@@ -767,27 +939,48 @@ def build_app():
             # TAB 2 — Refine Image
             # ============================================================
             with gr.TabItem("Refine Image"):
-                gr.Markdown("### Refine and upscale your diagram to high resolution (2K/4K)")
-                gr.Markdown("Upload an image, describe changes, and get a high-res version.")
+                gr.Markdown(
+                    "### Refine and upscale your diagram to high resolution (2K/4K)"
+                )
+                gr.Markdown(
+                    "Upload an image, describe changes, and get a high-res version."
+                )
 
                 with gr.Row():
                     with gr.Column():
-                        refine_upload = gr.Image(label="Upload Image", type="pil", height=400)
+                        refine_upload = gr.Image(
+                            label="Upload Image", type="pil", height=400
+                        )
                     with gr.Column():
                         refine_prompt = gr.Textbox(
-                            label="Edit Instructions", lines=6,
+                            label="Edit Instructions",
+                            lines=6,
                             placeholder="E.g., 'Change the color scheme to match academic paper style' or 'Keep everything the same but output in higher resolution'",
                         )
                         with gr.Row():
-                            refine_resolution = gr.Dropdown(choices=["2K", "4K"], value="2K", label="Resolution")
-                            refine_aspect = gr.Dropdown(choices=["21:9", "16:9", "3:2"], value="21:9", label="Aspect Ratio")
-                        refine_btn = gr.Button("Refine Image", variant="primary", elem_classes=["orange-btn"])
+                            refine_resolution = gr.Dropdown(
+                                choices=["2K", "4K"], value="2K", label="Resolution"
+                            )
+                            refine_aspect = gr.Dropdown(
+                                choices=["21:9", "16:9", "3:2"],
+                                value="21:9",
+                                label="Aspect Ratio",
+                            )
+                        refine_btn = gr.Button(
+                            "Refine Image",
+                            variant="primary",
+                            elem_classes=["orange-btn"],
+                        )
 
                 refine_status = gr.Textbox(label="Status", interactive=False)
 
                 with gr.Row():
-                    refine_before = gr.Image(label="Before", interactive=False, height=400)
-                    refine_after = gr.Image(label="After", interactive=False, height=400)
+                    refine_before = gr.Image(
+                        label="Before", interactive=False, height=400
+                    )
+                    refine_after = gr.Image(
+                        label="After", interactive=False, height=400
+                    )
                 refine_download = gr.File(label="Download refined image")
 
                 def run_refine(pil_img, prompt, resolution, ar):
@@ -803,7 +996,12 @@ def build_app():
                     loop = asyncio.new_event_loop()
                     try:
                         refined_bytes, msg = loop.run_until_complete(
-                            refine_image_with_nanoviz(image_bytes, prompt, aspect_ratio=ar, image_size=resolution)
+                            refine_image_with_nanoviz(
+                                image_bytes,
+                                prompt,
+                                aspect_ratio=ar,
+                                image_size=resolution,
+                            )
                         )
                     except Exception as e:
                         raise gr.Error(f"Refinement error: {e}")
@@ -826,20 +1024,32 @@ def build_app():
 
                 refine_btn.click(
                     fn=run_refine,
-                    inputs=[refine_upload, refine_prompt, refine_resolution, refine_aspect],
-                    outputs=[refine_before, refine_after, refine_download, refine_status],
+                    inputs=[
+                        refine_upload,
+                        refine_prompt,
+                        refine_resolution,
+                        refine_aspect,
+                    ],
+                    outputs=[
+                        refine_before,
+                        refine_after,
+                        refine_download,
+                        refine_status,
+                    ],
                 )
 
         # ================================================================
         # FOOTER
         # ================================================================
-        gr.HTML("""
+        gr.HTML(
+            """
         <div id="footer-row">
             <a href="https://github.com/dwzhu-pku/PaperBanana" target="_blank">GitHub</a> &middot;
             <a href="https://arxiv.org/abs/2601.23265" target="_blank">Paper</a><br/>
             PaperBanana &copy; 2026
         </div>
-        """)
+        """
+        )
 
     return app
 

@@ -202,7 +202,7 @@ async def analyze_batch(sem, batch_index, image_paths):
                 model=MODEL_NAME,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    temperature=1, max_output_tokens=8192
+                    temperature=1, max_output_tokens=50000
                 ),
             )
 
