@@ -122,7 +122,6 @@ Your goal is to synthesize these into a **"NeurIPS 2025 Statistical Plot Aesthet
 """
 
 
-
 DIAGRAM_FINAL_SUMMARY_PROMPT = """
 Below are multiple visual analysis reports from a dataset of NeurIPS 2025 method diagrams.
 Your goal is to synthesize these into a **"NeurIPS 2025 Method Diagram Aesthetics Guide"**.
@@ -160,9 +159,6 @@ Your goal is to synthesize these into a **"NeurIPS 2025 Method Diagram Aesthetic
 """
 
 
-
-
-
 # Selective Prompt Selection
 if MODE == "plot":
     BATCH_ANALYSIS_PROMPT = PLOT_BATCH_ANALYSIS_PROMPT
@@ -174,12 +170,13 @@ else:
 
 # ================= 4. Core Logic =================
 
+
 async def analyze_batch(sem, batch_index, image_paths):
     """Analyze a batch of images for visual patterns"""
     async with sem:
         valid_parts = []
         loaded_count = 0
-        
+
         # Load images
         for p in image_paths:
             try:
@@ -187,40 +184,42 @@ async def analyze_batch(sem, batch_index, image_paths):
                 if path_obj.exists():
                     file_bytes = path_obj.read_bytes()
                     mime = "image/png" if p.lower().endswith(".png") else "image/jpeg"
-                    valid_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=mime))
+                    valid_parts.append(
+                        types.Part.from_bytes(data=file_bytes, mime_type=mime)
+                    )
                     loaded_count += 1
             except Exception as e:
                 print(f"Error reading {p}: {e}")
-        
+
         if not valid_parts:
             return f"[Batch {batch_index}] Skipped: No valid images found."
-        
+
         # Call Gemini for visual analysis
         contents = valid_parts + [BATCH_ANALYSIS_PROMPT]
-        
+
         try:
             response = await client.aio.models.generate_content(
                 model=MODEL_NAME,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    temperature=1,
-                    max_output_tokens=50000
+                    temperature=1, max_output_tokens=8192
                 ),
             )
-            
+
             report_content = response.text
-            
+
             # Save intermediate results
             output_filename = os.path.join(BATCH_OUTPUT_DIR, f"batch_{batch_index}.txt")
             with open(output_filename, "w", encoding="utf-8") as f:
                 f.write(report_content)
-            
+
             return f"=== Batch {batch_index} Analysis ({loaded_count} images) ===\n{report_content}\n"
-        
+
         except Exception as e:
             error_msg = f"Error in Batch {batch_index}: {str(e)}"
             print(error_msg)
             return f"=== {error_msg} ===\n"
+
 
 async def main_task():
     """Main async task"""
@@ -228,75 +227,78 @@ async def main_task():
     os.makedirs(BATCH_OUTPUT_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(OUTPUT_REPORT_PATH), exist_ok=True)
     print(f"📁 Output directory: {BATCH_OUTPUT_DIR}")
-    
+
     # Step 1: Load and filter data
     print(f"📂 Loading {INPUT_JSON_PATH}...")
-    with open(INPUT_JSON_PATH, 'r', encoding='utf-8') as f:
+    with open(INPUT_JSON_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     # Extract image paths and resolve relative paths
     all_image_paths = []
     for item in data:
-        path_rel = item.get('path_to_gt_image')
+        path_rel = item.get("path_to_gt_image")
         if path_rel:
             # Resolve relative path using DATA_DIR
             path = DATA_DIR / path_rel
             if path.exists():
                 all_image_paths.append(str(path))
-    
+
     print(f"📸 Found {len(all_image_paths)} valid image paths")
-    
+
     # Apply sampling limit
     if NUM_SAMPLES is not None:
         all_image_paths = all_image_paths[:NUM_SAMPLES]
         print(f"✂️  Limiting to first {NUM_SAMPLES} samples")
-    
+
     if not all_image_paths:
         print("❌ No valid images found")
         return
-    
+
     # Step 2: Split into batches
-    batches = [all_image_paths[i:i + BATCH_SIZE] 
-               for i in range(0, len(all_image_paths), BATCH_SIZE)]
+    batches = [
+        all_image_paths[i : i + BATCH_SIZE]
+        for i in range(0, len(all_image_paths), BATCH_SIZE)
+    ]
     print(f"📦 Split into {len(batches)} batches (size: {BATCH_SIZE})")
-    
+
     # Step 3: Parallel analysis
     print(f"🚀 Starting visual analysis...")
     sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
     tasks = [analyze_batch(sem, i, b) for i, b in enumerate(batches)]
-    
+
     batch_reports = await tqdm.gather(*tasks, desc="Analyzing Batches")
-    
+
     # Step 4: Synthesize final style guide
     print("\n🧠 Synthesizing final style guide...")
     combined_text = "\n\n".join(batch_reports)
-    
+
     try:
         final_response = await client.aio.models.generate_content(
             model=MODEL_NAME,
-            contents=[FINAL_SUMMARY_PROMPT.format(
-                num_batches=len(batches),
-                all_reports=combined_text
-            )],
+            contents=[
+                FINAL_SUMMARY_PROMPT.format(
+                    num_batches=len(batches), all_reports=combined_text
+                )
+            ],
             config=types.GenerateContentConfig(
-                temperature=1.0,
-                max_output_tokens=16000
+                temperature=1.0, max_output_tokens=16000
             ),
         )
-        
+
         # Save final style guide
-        with open(OUTPUT_REPORT_PATH, 'w', encoding='utf-8') as f:
+        with open(OUTPUT_REPORT_PATH, "w", encoding="utf-8") as f:
             f.write(final_response.text)
-        
+
         print(f"\n🎉 Success! Style guide saved to: {OUTPUT_REPORT_PATH}")
-        print("="*80)
+        print("=" * 80)
         print("Preview:")
-        print("="*80)
+        print("=" * 80)
         print(final_response.text[:800] + "...\n")
         print(f"(See full content in {OUTPUT_REPORT_PATH})")
-        
+
     except Exception as e:
         print(f"❌ Error during synthesis: {e}")
+
 
 # ================= 5. Entry Point =================
 if __name__ == "__main__":

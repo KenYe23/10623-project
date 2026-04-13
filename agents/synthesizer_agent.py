@@ -53,26 +53,29 @@ class SynthesizerAgent(BaseAgent):
         content = data.get("content", "")
         if isinstance(content, (dict, list)):
             import json
+
             content = json.dumps(content)
         visual_intent = data.get("visual_intent", "")
 
-        content_list = [{
-            "type": "text",
-            "text": (
-                f"## Critic A Feedback\n"
-                f"### Suggestions:\n{suggestions_a}\n\n"
-                f"### Revised Description:\n{desc_a}\n\n"
-                f"---\n\n"
-                f"## Critic B Feedback\n"
-                f"### Suggestions:\n{suggestions_b}\n\n"
-                f"### Revised Description:\n{desc_b}\n\n"
-                f"---\n\n"
-                f"## Original Context\n"
-                f"### Methodology Section:\n{content}\n\n"
-                f"### Figure Caption:\n{visual_intent}\n\n"
-                f"Your Output:"
-            ),
-        }]
+        content_list = [
+            {
+                "type": "text",
+                "text": (
+                    f"## Critic A Feedback\n"
+                    f"### Suggestions:\n{suggestions_a}\n\n"
+                    f"### Revised Description:\n{desc_a}\n\n"
+                    f"---\n\n"
+                    f"## Critic B Feedback\n"
+                    f"### Suggestions:\n{suggestions_b}\n\n"
+                    f"### Revised Description:\n{desc_b}\n\n"
+                    f"---\n\n"
+                    f"## Original Context\n"
+                    f"### Methodology Section:\n{content}\n\n"
+                    f"### Figure Caption:\n{visual_intent}\n\n"
+                    f"Your Output:"
+                ),
+            }
+        ]
 
         response_list = await generation_utils.call_model_with_retry_async(
             model_name=self.model_name,
@@ -81,7 +84,7 @@ class SynthesizerAgent(BaseAgent):
                 system_instruction=self.system_prompt,
                 temperature=self.exp_config.temperature,
                 candidate_count=1,
-                max_output_tokens=50000,
+                max_output_tokens=8192,
             ),
             max_attempts=5,
             retry_delay=5,
@@ -108,10 +111,14 @@ class SynthesizerAgent(BaseAgent):
         # If no changes needed, fall back to the previous description
         if description.strip() == "No changes needed.":
             if round_idx == 0:
-                fallback = data.get(f"target_{task_name}_stylist_desc0",
-                                    data.get(f"target_{task_name}_desc0", ""))
+                fallback = data.get(
+                    f"target_{task_name}_stylist_desc0",
+                    data.get(f"target_{task_name}_desc0", ""),
+                )
             else:
-                fallback = data.get(f"target_{task_name}_critic_desc{round_idx - 1}", "")
+                fallback = data.get(
+                    f"target_{task_name}_critic_desc{round_idx - 1}", ""
+                )
             data[f"target_{task_name}_critic_desc{round_idx}"] = fallback
 
         return data

@@ -358,7 +358,7 @@ async def call_bedrock_converse_with_retry_async(
     system_prompt = config.get("system_prompt", "")
     temperature = config.get("temperature", 1.0)
     candidate_num = config.get("candidate_num", 1)
-    max_tokens = config.get("max_completion_tokens", 50000)
+    max_tokens = config.get("max_completion_tokens", 8192)
 
     url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/converse"
     headers = {
@@ -544,7 +544,7 @@ async def call_claude_with_retry_async(
     max_output_tokens = (
         config["max_output_tokens"]
         if "max_output_tokens" in config
-        else config.get("max_completion_tokens", 50000)
+        else config.get("max_completion_tokens", 8192)
     )
     response_text_list = []
 
@@ -1040,7 +1040,7 @@ async def call_model_with_retry_async(
             config.candidate_count if hasattr(config, "candidate_count") else 1
         ),
         "max_completion_tokens": (
-            config.max_output_tokens if hasattr(config, "max_output_tokens") else 50000
+            config.max_output_tokens if hasattr(config, "max_output_tokens") else 8192
         ),
     }
 
