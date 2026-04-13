@@ -30,17 +30,26 @@ export FLUX2_SERVER_URL="http://localhost:30000"
 
 # ── 1. Start FLUX2 server ──
 echo "[$(date)] Starting FLUX2 server..."
-python scripts/flux2_http_server.py --port 30000 &
+FLUX_SERVER_ARGS="${FLUX_SERVER_ARGS:-}"
+python -u scripts/flux2_http_server.py --port 30000 ${FLUX_SERVER_ARGS} > logs/sglang_${SLURM_JOB_ID}.log 2>&1 &
 FLUX_PID=$!
 
-# Wait for server readiness (up to 10 min)
-for i in $(seq 1 60); do
-    if curl -s http://localhost:30000/v1/models > /dev/null 2>&1; then
+# Wait for server readiness (up to 40 min)
+for i in $(seq 1 240); do
+    if curl -sf http://localhost:30000/health > /dev/null 2>&1; then
         echo "[$(date)] FLUX2 server ready after $((i * 10))s"
         break
     fi
-    if [ "$i" -eq 60 ]; then
-        echo "ERROR: FLUX2 server did not start within 10 minutes."
+
+    if ! kill -0 "$FLUX_PID" 2>/dev/null; then
+        echo "ERROR: FLUX2 server exited early."
+        tail -200 logs/sglang_${SLURM_JOB_ID}.log || true
+        exit 1
+    fi
+
+    if [ "$i" -eq 240 ]; then
+        echo "ERROR: FLUX2 server did not start within 40 minutes."
+        tail -200 logs/sglang_${SLURM_JOB_ID}.log || true
         kill $FLUX_PID 2>/dev/null
         exit 1
     fi
