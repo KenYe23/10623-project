@@ -148,6 +148,11 @@ Before running any job, set these environment variables:
 export AWS_BEARER_TOKEN_BEDROCK="ABSKQmVkcm9ja0FQSUtleS..."
 export AWS_BEDROCK_REGION="us-east-1"
 export FLUX2_SERVER_URL="http://localhost:30000"
+
+# Optional model overrides for Slurm scripts
+export MAIN_MODEL_NAME="bedrock/qwen.qwen3-vl-235b-a22b"
+export CRITIC_B_MODEL_NAME="bedrock/global.anthropic.claude-sonnet-4-6"   # parallel only
+export IMAGE_GEN_MODEL_NAME="flux2-dev"
 ```
 
 **Optional: Non-Bedrock Models**
@@ -213,7 +218,10 @@ You can run disjoint index ranges with `START_IDX` (inclusive) and `END_IDX` (ex
 Example shard `[0, 50)`:
 
 ```bash
-START_IDX=0 END_IDX=50 SPLIT_NAME=test MAX_CONCURRENT=6 sbatch scripts/run_combined_parallel.sh
+START_IDX=0 END_IDX=50 SPLIT_NAME=test MAX_CONCURRENT=6 \
+MAIN_MODEL_NAME="bedrock/qwen.qwen3-vl-235b-a22b" \
+CRITIC_B_MODEL_NAME="bedrock/global.anthropic.claude-sonnet-4-6" \
+sbatch scripts/run_combined_parallel.sh
 ```
 
 After all shard jobs finish, merge outputs:

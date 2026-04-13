@@ -4,18 +4,18 @@
 #SBATCH -p GPU-shared
 #SBATCH --gpus=h100-80:1
 #SBATCH --time=03:00:00
-#SBATCH --output=/ocean/projects/cis240137p/eshen3/PaperBanana/logs/%x_%j.out
-#SBATCH --error=/ocean/projects/cis240137p/eshen3/PaperBanana/logs/%x_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
 # ── Storage redirects (critical: 25 GB home quota on PSC) ──
 export HF_HOME=$PROJECT/hf_cache
 export HF_HUB_CACHE=$HF_HOME/hub
-export TRANSFORMERS_CACHE=$HF_HOME/transformers
 export XDG_CACHE_HOME=$PROJECT/.cache
 export HF_HUB_DISABLE_XET=1
+mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$XDG_CACHE_HOME" logs
 
 # ── Activate environment ──
-source /ocean/projects/cis240137p/eshen3/anaconda3/etc/profile.d/conda.sh
+module load anaconda3
 conda activate paperbanana
 module load cuda
 module load gcc/13.3.1-p20240614
@@ -41,7 +41,7 @@ trap cleanup EXIT
 
 # ── 1. Start FLUX2 server ──
 echo "[$(date)] Starting FLUX2 server..."
-python scripts/flux2_http_server.py --port 30000 > /ocean/projects/cis240137p/eshen3/PaperBanana/logs/sglang_${SLURM_JOB_ID}.log 2>&1 &
+python scripts/flux2_http_server.py --port 30000 > logs/sglang_${SLURM_JOB_ID}.log 2>&1 &
 FLUX_PID=$!
 
 # Wait for server readiness (up to 30 min)
@@ -54,7 +54,7 @@ for i in $(seq 1 150); do
 
     if ! kill -0 "$FLUX_PID" 2>/dev/null; then
         echo "ERROR: FLUX2 server exited early."
-        tail -200 /ocean/projects/cis240137p/eshen3/PaperBanana/logs/sglang_${SLURM_JOB_ID}.log || true
+        tail -200 logs/sglang_${SLURM_JOB_ID}.log || true
         exit 1
     fi
 
@@ -63,13 +63,15 @@ done
 
 if [[ "$READY" -ne 1 ]]; then
     echo "ERROR: FLUX2 server did not start within 25 minutes."
-    tail -200 /ocean/projects/cis240137p/eshen3/PaperBanana/logs/sglang_${SLURM_JOB_ID}.log || true
+    tail -200 logs/sglang_${SLURM_JOB_ID}.log || true
     exit 1
 fi
 
 # ── 2. Run baseline pipeline (single-critic, dev_full) ──
-SPLIT_NAME="${SPLIT_NAME:-test_mini100}"
+SPLIT_NAME="${SPLIT_NAME:-test}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-10}"
+MAIN_MODEL_NAME="${MAIN_MODEL_NAME:-bedrock/qwen.qwen3-vl-235b-a22b}"
+IMAGE_GEN_MODEL_NAME="${IMAGE_GEN_MODEL_NAME:-flux2-dev}"
 
 MAIN_ARGS=(
     --dataset_name PaperBananaBench
@@ -79,8 +81,8 @@ MAIN_ARGS=(
     --retrieval_setting auto
     --max_critic_rounds 3
     --max_concurrent "$MAX_CONCURRENT"
-    --main_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
-    --image_gen_model_name "flux2-dev"
+    --main_model_name "$MAIN_MODEL_NAME"
+    --image_gen_model_name "$IMAGE_GEN_MODEL_NAME"
     --resume
 )
 

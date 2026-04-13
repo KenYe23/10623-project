@@ -50,6 +50,9 @@ done
 # ── 2. Run parallel debate pipeline ──
 SPLIT_NAME="${SPLIT_NAME:-test}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-10}"
+MAIN_MODEL_NAME="${MAIN_MODEL_NAME:-bedrock/qwen.qwen3-vl-235b-a22b}"
+CRITIC_B_MODEL_NAME="${CRITIC_B_MODEL_NAME:-bedrock/global.anthropic.claude-sonnet-4-6}"
+IMAGE_GEN_MODEL_NAME="${IMAGE_GEN_MODEL_NAME:-flux2-dev}"
 
 MAIN_ARGS=(
     --dataset_name PaperBananaBench
@@ -59,9 +62,9 @@ MAIN_ARGS=(
     --retrieval_setting auto
     --max_critic_rounds 3
     --max_concurrent "$MAX_CONCURRENT"
-    --main_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
-    --image_gen_model_name "flux2-dev"
-    --critic_b_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
+    --main_model_name "$MAIN_MODEL_NAME"
+    --image_gen_model_name "$IMAGE_GEN_MODEL_NAME"
+    --critic_b_model_name "$CRITIC_B_MODEL_NAME"
     --resume
 )
 
