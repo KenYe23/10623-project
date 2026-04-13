@@ -77,7 +77,7 @@ cd $PROJECT/PaperBanana
 
 ### 4. Hugging Face login (required before downloading FLUX.2-dev)
 
-`FLUX.2-dev` is gated and requires your own Hugging Face account/token.
+`FLUX.2-dev` is gated.
 
 1. **Request model access:**
    - Open https://huggingface.co/black-forest-labs/FLUX.2-dev in a browser
@@ -92,7 +92,7 @@ cd $PROJECT/PaperBanana
 hf auth login
 ```
 
-Optional verification:
+Verify:
 
 ```bash
 hf auth whoami
@@ -100,7 +100,7 @@ hf auth whoami
 
 ### 5. Pre-download FLUX.2-dev Weights
 
-Run this in an interactive session on a compute node (download is large; plan for >50 GB):
+Download on a compute node (plan for >100 GB):
 
 ```bash
 mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$XDG_CACHE_HOME"
@@ -141,17 +141,18 @@ You only need to complete the **Setup** section once. On subsequent PSC logins, 
 
 ### 1. Runtime environment variables
 
-Before running any job, set these environment variables:
+Run this block before any local test or Slurm submission:
 
 ```bash
 # Required for all model calls (Claude, Qwen)
 export AWS_BEARER_TOKEN_BEDROCK="ABSKQmVkcm9ja0FQSUtleS..."
 export AWS_BEDROCK_REGION="us-east-1"
 export FLUX2_SERVER_URL="http://localhost:30000"
+export FLUX_SERVER_ARGS="--model_name flux.2-dev --remote_text_encoder"
 
 # Optional model overrides for Slurm scripts
 export MAIN_MODEL_NAME="bedrock/qwen.qwen3-vl-235b-a22b"
-export CRITIC_B_MODEL_NAME="bedrock/global.anthropic.claude-sonnet-4-6"   # parallel only
+export CRITIC_B_MODEL_NAME="bedrock/global.anthropic.claude-sonnet-4-6"
 export IMAGE_GEN_MODEL_NAME="flux2-dev"
 ```
 
@@ -176,7 +177,7 @@ conda activate paperbanana
 cd $PROJECT/PaperBanana
 
 # Start FLUX.2-dev server in background and wait for health check
-python scripts/flux2_http_server.py --port 30000 > flux_server.log 2>&1 &
+python scripts/flux2_http_server.py --port 30000 ${FLUX_SERVER_ARGS} > flux_server.log 2>&1 &
 until curl -sf http://localhost:30000/health > /dev/null; do
     echo "waiting for FLUX server..."
     sleep 5
@@ -198,7 +199,7 @@ python main.py \
 
 ### Full Runs via Slurm
 
-Both scripts start the FLUX.2-dev local server as a background process, wait for readiness, then run the pipeline. They use `--resume` to skip already-processed samples (safe to re-submit after wall-time interrupts).
+Both scripts start the FLUX.2-dev local server as a background process, wait for readiness, then run the pipeline. They use `--resume` to skip already-processed samples.
 
 ```bash
 cd $PROJECT/PaperBanana
@@ -209,24 +210,12 @@ sbatch scripts/run_combined_baseline.sh
 
 # Proposed: parallel debate (dev_parallel_debate)
 sbatch scripts/run_combined_parallel.sh
-```
 
-### Sharding the 292 test samples
-
-You can run disjoint index ranges with `START_IDX` (inclusive) and `END_IDX` (exclusive).
-
-Example shard `[0, 50)`:
-
-```bash
-START_IDX=0 END_IDX=50 SPLIT_NAME=test MAX_CONCURRENT=6 \
-MAIN_MODEL_NAME="bedrock/qwen.qwen3-vl-235b-a22b" \
-CRITIC_B_MODEL_NAME="bedrock/global.anthropic.claude-sonnet-4-6" \
+# Sharded run [0, 50)
+START_IDX=0 END_IDX=50
 sbatch scripts/run_combined_parallel.sh
-```
 
-After all shard jobs finish, merge outputs:
-
-```bash
+# Merge shard outputs after all jobs finish
 python scripts/merge_shard_results.py \
     --inputs results/PaperBananaBench_diagram/*dev_parallel_debate_test*.json \
     --output results/PaperBananaBench_diagram/merged_dev_parallel_debate_test.json
@@ -390,7 +379,7 @@ In the app sidebar, set **Results JSON/JSONL Path** to your result file, for exa
 /ocean/projects/cis260099p/kye3/PaperBanana/results/PaperBananaBench_diagram/0412_1423_autoret_dev_parallel_debate_test.json
 ```
 
-Optional second viewer:
+Second viewer:
 
 ```bash
 

@@ -15,12 +15,15 @@ import json
 import os
 import random
 import threading
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import torch
+from huggingface_hub import get_token
 from einops import rearrange
 from PIL import Image
 
@@ -44,11 +47,22 @@ from flux2.util import FLUX2_MODEL_INFO, load_ae, load_flow_model, load_text_enc
 
 class Flux2Service:
     def __init__(
-        self, model_name: str, cpu_offloading: bool, num_steps: int, guidance: float
+        self,
+        model_name: str,
+        cpu_offloading: bool,
+        num_steps: int,
+        guidance: float,
+        use_remote_text_encoder: bool = False,
+        remote_text_encoder_url: str = "https://remote-text-encoder-flux-2.huggingface.co/predict",
     ):
         model_name = model_name.lower()
         if model_name not in FLUX2_MODEL_INFO:
             raise ValueError(f"Unsupported model: {model_name}")
+
+        if use_remote_text_encoder and model_name != "flux.2-dev":
+            raise ValueError(
+                "--remote_text_encoder is currently supported only for model_name=flux.2-dev"
+            )
 
         self.model_name = model_name
         self.model_info = FLUX2_MODEL_INFO[model_name]
@@ -56,9 +70,15 @@ class Flux2Service:
         self.guidance = guidance
         self.num_steps = num_steps
         self.torch_device = torch.device("cuda")
+        self.use_remote_text_encoder = use_remote_text_encoder
+        self.remote_text_encoder_url = remote_text_encoder_url
 
         # Load modules similarly to flux2/scripts/cli.py
-        self.text_encoder = load_text_encoder(model_name, device=self.torch_device)
+        self.text_encoder = (
+            None
+            if self.use_remote_text_encoder
+            else load_text_encoder(model_name, device=self.torch_device)
+        )
         self.model = load_flow_model(
             model_name,
             debug_mode=False,
@@ -66,7 +86,8 @@ class Flux2Service:
         )
         self.ae = load_ae(model_name, device=self.torch_device)
 
-        self.text_encoder.eval()
+        if self.text_encoder is not None:
+            self.text_encoder.eval()
         self.model.eval()
         self.ae.eval()
 
@@ -78,6 +99,51 @@ class Flux2Service:
             self.guidance = float(defaults.get("guidance", 4.0))
 
         self._lock = threading.Lock()
+
+    def _get_remote_prompt_embeds(self, prompts: list[str]) -> torch.Tensor:
+        if not prompts:
+            raise ValueError("prompts must be non-empty")
+
+        hf_token = (
+            get_token() or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+        )
+        if not hf_token:
+            raise RuntimeError(
+                "Remote text-encoder requires a Hugging Face token. "
+                "Run 'hf auth login' or set HF_TOKEN/HUGGINGFACE_TOKEN."
+            )
+
+        payload_prompt: Any = prompts[0] if len(prompts) == 1 else prompts
+        req = urllib.request.Request(
+            self.remote_text_encoder_url,
+            data=json.dumps({"prompt": payload_prompt}).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {hf_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Remote text-encoder HTTP {e.code}: {msg[:500]}") from e
+        except Exception as e:
+            raise RuntimeError(f"Remote text-encoder request failed: {e}") from e
+
+        prompt_embeds = torch.load(BytesIO(raw), map_location="cpu")
+        if isinstance(prompt_embeds, dict) and "prompt_embeds" in prompt_embeds:
+            prompt_embeds = prompt_embeds["prompt_embeds"]
+        if not isinstance(prompt_embeds, torch.Tensor):
+            raise RuntimeError(
+                f"Unexpected remote text-encoder payload type: {type(prompt_embeds)}"
+            )
+        if prompt_embeds.ndim == 2:
+            prompt_embeds = prompt_embeds.unsqueeze(0)
+
+        return prompt_embeds.to(device=self.torch_device, dtype=torch.bfloat16)
 
     @staticmethod
     def _normalize_dims(width: int, height: int) -> tuple[int, int]:
@@ -102,7 +168,12 @@ class Flux2Service:
 
         with self._lock:
             with torch.no_grad():
-                if self.model_info["guidance_distilled"]:
+                if self.use_remote_text_encoder:
+                    if self.model_info["guidance_distilled"]:
+                        ctx = self._get_remote_prompt_embeds([prompt])
+                    else:
+                        ctx = self._get_remote_prompt_embeds(["", prompt])
+                elif self.model_info["guidance_distilled"]:
                     ctx = self.text_encoder([prompt]).to(torch.bfloat16)
                 else:
                     ctx_empty = self.text_encoder([""]).to(torch.bfloat16)
@@ -110,7 +181,7 @@ class Flux2Service:
                     ctx = torch.cat([ctx_empty, ctx_prompt], dim=0)
                 ctx, ctx_ids = batched_prc_txt(ctx)
 
-                if self.cpu_offloading:
+                if self.cpu_offloading and self.text_encoder is not None:
                     self.text_encoder = self.text_encoder.cpu()
                     torch.cuda.empty_cache()
                     self.model = self.model.to(self.torch_device)
@@ -147,7 +218,7 @@ class Flux2Service:
                 x = torch.cat(scatter_ids(x, x_ids)).squeeze(2)
                 x = self.ae.decode(x).float()
 
-                if self.cpu_offloading:
+                if self.cpu_offloading and self.text_encoder is not None:
                     self.model = self.model.cpu()
                     torch.cuda.empty_cache()
                     self.text_encoder = self.text_encoder.to(self.torch_device)
@@ -241,6 +312,17 @@ def main() -> None:
     parser.add_argument("--num_steps", type=int, default=50)
     parser.add_argument("--guidance", type=float, default=4.0)
     parser.add_argument("--no_cpu_offloading", action="store_true")
+    parser.add_argument(
+        "--remote_text_encoder",
+        action="store_true",
+        help="Use Hugging Face hosted remote text-encoder (supported for flux.2-dev)",
+    )
+    parser.add_argument(
+        "--remote_text_encoder_url",
+        type=str,
+        default="https://remote-text-encoder-flux-2.huggingface.co/predict",
+        help="Remote text-encoder endpoint URL",
+    )
     args = parser.parse_args()
 
     FluxHandler.service = Flux2Service(
@@ -248,6 +330,8 @@ def main() -> None:
         cpu_offloading=not args.no_cpu_offloading,
         num_steps=args.num_steps,
         guidance=args.guidance,
+        use_remote_text_encoder=args.remote_text_encoder,
+        remote_text_encoder_url=args.remote_text_encoder_url,
     )
 
     server = ThreadingHTTPServer((args.host, args.port), FluxHandler)
