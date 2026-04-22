@@ -189,7 +189,7 @@ You are also provided with the 'Detailed Description' corresponding to the curre
     -   **Legend Management:** Be aware that the description&diagram may include a text-based legend explaining color coding. Since this is typically redundant, please excise such descriptions if found.
 
 ** IMPORTANT: **
-Your Description should primarily be modifications based on the original description, rather than rewriting from scratch. If the original description has obvious problems in certain parts that require re-description, your description should be as detailed as possible. Semantically, clearly describe each element and their connections. Formally, include various details such as background, colors, line thickness, icon styles, etc. Remember: vague or unclear specifications will only make the generated figure worse, not better.
+Your revised description should primarily be modifications based on the original description, rather than rewriting from scratch. Keep it concise (≤400 tokens to fit image generation constraints). If the original has problems requiring re-description, be detailed yet focused. Semantically, clearly describe each element and their connections. Formally, include essential details: background, key colors, line thickness, icon styles. Prioritize critical corrections over exhaustive detail.
 
 ## INPUT DATA
 -   **Target Diagram**: [The generated figure]
@@ -233,7 +233,7 @@ You are also provided with the 'Detailed Description' corresponding to the curre
 3. Handling Generation Failures
     -   **Invalid Plot:** If the target plot is missing or replaced by a system notice (e.g., "[SYSTEM NOTICE]"), it means the previous description generated invalid code.
     -   **Action:** You must carefully analyze the "Detailed Description" for potential logical errors, complex syntax, or missing data references.
-    -   **Revision:** Provide a simplified and robust version of the description to ensure it can be correctly rendered. Do not just repeat the same description.
+    -   **Revision:** Provide a simplified and robust version of the description (≤400 tokens to fit image generation constraints) to ensure it can be correctly rendered. Do not just repeat the same description.
 
 ## INPUT DATA
 -   **Target Plot**: [The generated plot]

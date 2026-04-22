@@ -187,7 +187,7 @@ class PaperVizProcessor:
             data = await self.visualizer_agent.process(data)
             # Use max_critic_rounds from data (if set) or config
             max_rounds = data.get("max_critic_rounds", self.exp_config.max_critic_rounds)
-            data = await self._run_critic_iterations(data, task_name, max_rounds=max_rounds, source="stylist")
+            data = await self._run_critic_iterations(data, task_name, max_rounds=max_rounds, source="planner")
             if "demo" in exp_mode: do_eval = False
         
         elif exp_mode == "dev_polish":
@@ -205,7 +205,7 @@ class PaperVizProcessor:
             # data = await self.stylist_agent.process(data)
             data = await self.visualizer_agent.process(data)
             max_rounds = data.get("max_critic_rounds", self.exp_config.max_critic_rounds)
-            data = await self._run_parallel_debate_iterations(data, task_name, max_rounds=max_rounds, source="stylist")
+            data = await self._run_parallel_debate_iterations(data, task_name, max_rounds=max_rounds, source="planner")
 
         else:
             raise ValueError(f"Unknown experiment name: {exp_mode}")

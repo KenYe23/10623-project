@@ -12,20 +12,26 @@ Exposes an OpenAI-compatible endpoint used by PaperBanana:
 
 from __future__ import annotations
 
+import sys
 import argparse
 import base64
+import io
 import json
 import random
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from typing import Any
 
+# import requests
 import torch
 from diffusers import AutoModel, Flux2Pipeline
+# from huggingface_hub import get_token
 from PIL import Image
-from transformers import Mistral3ForConditionalGeneration
+from transformers import Mistral3ForConditionalGeneration, AutoTokenizer
+from gradio_client import Client
 
 
 class Flux2Service:
@@ -35,32 +41,63 @@ class Flux2Service:
         num_steps: int,
         guidance: float,
         cpu_offloading: bool,
+        remote_text_encoder: bool,
     ):
         self.repo_id = repo_id
         self.num_steps = num_steps
         self.guidance = guidance
         self.device = "cuda:0"
+        self.remote_text_encoder = remote_text_encoder
         self.torch_dtype = (
             torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         )
 
-        print(f"Loading 4-bit text encoder from {repo_id} (dtype={self.torch_dtype}) …")
-        text_encoder = Mistral3ForConditionalGeneration.from_pretrained(
-            repo_id,
-            subfolder="text_encoder",
-            torch_dtype=self.torch_dtype,
-            device_map="cpu",
-        )
+        print("=" * 80, flush=True)
+        print("[INIT] Starting Flux2Service initialization", flush=True)
+        print(f"[INIT] Repo: {repo_id}", flush=True)
+        print(f"[INIT] Remote text encoder: {remote_text_encoder}", flush=True)
+        print(f"[INIT] CPU offloading: {cpu_offloading}", flush=True)
+        print("=" * 80, flush=True)
 
-        print(f"Loading 4-bit transformer from {repo_id} …")
+        self.tokenizer = None
+        self.remote_encoder_client = None
+
+        if remote_text_encoder:
+            print("Using remote text encoder (Gradio Space) …", flush=True)
+            self.remote_encoder_client = Client("multimodalart/mistral-text-encoder")
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    repo_id,
+                    subfolder="tokenizer",
+                )
+                print(f"✓ Loaded tokenizer from {repo_id}/tokenizer", flush=True)
+            except Exception as e:
+                print(f"⚠️ Could not load tokenizer: {e}", flush=True)
+                print("⚠️ Will use character-based truncation fallback", flush=True)
+                self.tokenizer = None
+            text_encoder = None
+        else:
+            print(
+                f"Loading 4-bit text encoder from {repo_id} (dtype={self.torch_dtype}) …",
+                flush=True,
+            )
+            text_encoder = Mistral3ForConditionalGeneration.from_pretrained(
+                repo_id,
+                subfolder="text_encoder",
+                torch_dtype=self.torch_dtype,
+                device_map="cpu",
+            )
+
+        print(f"Loading 4-bit transformer from {repo_id} …", flush=True)
+        dit_device_map = self.device if remote_text_encoder else "cpu"
         dit = AutoModel.from_pretrained(
             repo_id,
             subfolder="transformer",
             torch_dtype=self.torch_dtype,
-            device_map="cpu",
+            device_map=dit_device_map,
         )
 
-        print("Building Flux2Pipeline …")
+        print("Building Flux2Pipeline …", flush=True)
         self.pipe = Flux2Pipeline.from_pretrained(
             repo_id,
             text_encoder=text_encoder,
@@ -68,13 +105,19 @@ class Flux2Service:
             torch_dtype=self.torch_dtype,
         )
 
-        if cpu_offloading:
+        if remote_text_encoder:
+            print("Keeping transformer on GPU (text encoder is remote)", flush=True)
+            self.pipe.to(self.device)
+        elif cpu_offloading:
+            print("Enabling CPU offloading for memory efficiency", flush=True)
             self.pipe.enable_model_cpu_offload()
         else:
             self.pipe.to(self.device)
 
         self._lock = threading.Lock()
-        print("Flux2Service ready.")
+        print("=" * 80, flush=True)
+        print("Flux2Service ready.", flush=True)
+        print("=" * 80, flush=True)
 
     @staticmethod
     def _normalize_dims(width: int, height: int) -> tuple[int, int]:
@@ -90,6 +133,52 @@ class Flux2Service:
         image.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
+    def _truncate_prompt(self, prompt: str, max_tokens: int = 512) -> str:
+        """Truncate prompt to fit within token limit for remote text encoder."""
+        if not self.tokenizer:
+            # Fallback: character-based truncation (roughly 4 chars per token)
+            max_chars = max_tokens * 4
+            if len(prompt) <= max_chars:
+                print(f"✓ Prompt within limit: ~{len(prompt)//4} tokens (character-based estimate)", flush=True)
+                return prompt
+            print(f"⚠️  Prompt too long: ~{len(prompt)//4} tokens, truncating to {max_tokens}...", flush=True)
+            truncated_prompt = prompt[:max_chars]
+            print(f"✓ Truncated prompt: ~{max_tokens} tokens (character-based)", flush=True)
+            return truncated_prompt
+        
+        tokens = self.tokenizer.encode(prompt, add_special_tokens=True)
+        if len(tokens) <= max_tokens:
+            print(f"✓ Prompt within limit: {len(tokens)} tokens", flush=True)
+            return prompt
+        
+        print(f"⚠️  Prompt too long: {len(tokens)} tokens, truncating to {max_tokens}...", flush=True)
+        truncated_tokens = tokens[:max_tokens]
+        truncated_prompt = self.tokenizer.decode(truncated_tokens, skip_special_tokens=True)
+        print(f"✓ Truncated prompt: {len(truncated_tokens)} tokens", flush=True)
+        return truncated_prompt
+
+    def _call_remote_text_encoder(self, prompt: str) -> torch.Tensor:
+        prompt = self._truncate_prompt(prompt, max_tokens=512)
+        print(f"📡 Calling remote text encoder for prompt ({len(prompt)} chars)...", flush=True)
+
+        try:
+            result = self.remote_encoder_client.predict(
+                prompt=prompt,
+                api_name="/encode_text",
+            )
+
+            # HF Space returns a path to a serialized tensor file
+            prompt_embeds = torch.load(result[0], weights_only=False)
+            print(
+                f"✓ Prompt embeds loaded: shape={prompt_embeds.shape}, dtype={prompt_embeds.dtype}",
+                flush=True,
+            )
+            return prompt_embeds.to(self.device)
+
+        except Exception as e:
+            print(f"❌ Remote text encoder failed: {e}", flush=True)
+            raise
+
     def generate(
         self, prompt: str, width: int, height: int, seed: int | None = None
     ) -> str:
@@ -97,17 +186,48 @@ class Flux2Service:
         if seed is None:
             seed = random.randrange(2**31)
 
+        print("="*80, flush=True)
+        print(f"🎨 Generating image: {width}x{height}, seed={seed}", flush=True)
+        print(f"   Prompt: {prompt[:100]}...", flush=True)
+        sys.stdout.flush()
+
         with self._lock:
-            result = self.pipe(
-                prompt=prompt,
-                width=width,
-                height=height,
-                generator=torch.Generator(device=self.device).manual_seed(seed),
-                num_inference_steps=self.num_steps,
-                guidance_scale=self.guidance,
-            )
+            generator = torch.Generator(device=self.device).manual_seed(seed)
+            
+            if self.remote_text_encoder:
+                # Use remote text encoder
+                prompt_embeds = self._call_remote_text_encoder(prompt)
+                print(f"🔄 Running diffusion pipeline with remote embeds...", flush=True)
+                sys.stdout.flush()
+                result = self.pipe(
+                    prompt_embeds=prompt_embeds,
+                    width=width,
+                    height=height,
+                    generator=generator,
+                    num_inference_steps=self.num_steps,
+                    guidance_scale=self.guidance,
+                )
+            else:
+                # Use local text encoder
+                print(f"🔄 Running diffusion pipeline with local text encoder...", flush=True)
+                sys.stdout.flush()
+                result = self.pipe(
+                    prompt=prompt,
+                    width=width,
+                    height=height,
+                    generator=generator,
+                    num_inference_steps=self.num_steps,
+                    guidance_scale=self.guidance,
+                )
+            
+            print(f"✓ Diffusion complete, encoding to PNG...", flush=True)
+            sys.stdout.flush()
             img = result.images[0]
-            return self._pil_to_b64_png(img)
+            b64 = self._pil_to_b64_png(img)
+            print(f"✓ Image generated successfully ({len(b64)} bytes base64)", flush=True)
+            print("="*80, flush=True)
+            sys.stdout.flush()
+            return b64
 
 
 class FluxHandler(BaseHTTPRequestHandler):
@@ -132,6 +252,9 @@ class FluxHandler(BaseHTTPRequestHandler):
         self._write_json(404, {"error": f"Not found: {self.path}"})
 
     def do_POST(self) -> None:
+        print(f"\n[REQUEST] POST {self.path}", flush=True)
+        sys.stdout.flush()
+        
         if self.path != "/v1/images/generations":
             self._write_json(404, {"error": f"Not found: {self.path}"})
             return
@@ -143,6 +266,9 @@ class FluxHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
             payload = json.loads(raw.decode("utf-8") or "{}")
+            
+            print(f"[REQUEST] Payload received: {len(raw)} bytes", flush=True)
+            sys.stdout.flush()
 
             prompt = str(payload.get("prompt", "")).strip()
             if not prompt:
@@ -182,6 +308,11 @@ class FluxHandler(BaseHTTPRequestHandler):
             )
 
         except Exception as e:
+            print("="*80, flush=True)
+            print(f"❌ Error during generation:", flush=True)
+            print(traceback.format_exc(), flush=True)
+            print("="*80, flush=True)
+            sys.stdout.flush()
             self._write_json(500, {"error": f"Generation failed: {e}"})
 
 
@@ -204,17 +335,33 @@ def main() -> None:
         action="store_true",
         help="Disable CPU offloading (needs >80 GB VRAM)",
     )
+    parser.add_argument(
+        "--remote_text_encoder",
+        action="store_true",
+        help="Use HuggingFace's remote text encoder service (reduces VRAM, fits on V100)",
+    )
+    
     args = parser.parse_args()
+
+    print("="*80, flush=True)
+    print("Starting FLUX.2-dev 4-bit quantized server", flush=True)
+    print(f"Host: {args.host}:{args.port}", flush=True)
+    print(f"Repo: {args.repo_id}", flush=True)
+    print(f"Remote text encoder: {args.remote_text_encoder}", flush=True)
+    print("="*80, flush=True)
+    sys.stdout.flush()
 
     FluxHandler.service = Flux2Service(
         repo_id=args.repo_id,
         num_steps=args.num_steps,
         guidance=args.guidance,
         cpu_offloading=not args.no_cpu_offloading,
+        remote_text_encoder=args.remote_text_encoder,
     )
 
     server = ThreadingHTTPServer((args.host, args.port), FluxHandler)
-    print(f"FLUX2 server running on http://{args.host}:{args.port}")
+    print(f"FLUX2 server running on http://{args.host}:{args.port}", flush=True)
+    sys.stdout.flush()
     server.serve_forever()
 
 

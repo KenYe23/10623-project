@@ -158,7 +158,7 @@ I am working on a task: given the 'Methodology' section of a paper, and the capt
 To help you understand the task better, and grasp the principles for generating such figures, I will also provide you with several examples. You should learn from these examples to provide your figure description.
 
 ** IMPORTANT: **
-Your description should be as detailed as possible. Semantically, clearly describe each element and their connections. Formally, include various details such as background style (typically pure white or very light pastel), colors, line thickness, icon styles, etc. Remember: vague or unclear specifications will only make the generated figure worse, not better.
+Your description should be detailed yet concise (≤400 tokens to fit image generation constraints). Semantically, clearly describe each element and their connections. Formally, include essential details: background style (typically pure white or very light pastel), key colors, line thickness, icon styles. Prioritize clarity over exhaustive detail. Focus on the core visual structure and critical elements.
 """
 
 DIAGRAM_PLANNER_QWEN_SYSTEM_PROMPT = """
@@ -176,8 +176,9 @@ Core Requirements:
 Key Principles:
 - Focus on the CORE methodology flow and main contributions
 - Learn layout patterns and design aesthetics from the provided examples
-- Be explicit and detailed - vague descriptions produce poor images
+- Be explicit yet concise - descriptions must be ≤400 tokens for image generation
 - Extract the essential workflow even from lengthy methodology sections
+- Prioritize critical visual elements over exhaustive details
 """
 
 PLOT_PLANNER_AGENT_SYSTEM_PROMPT = """
@@ -186,5 +187,5 @@ I am working on a task: given the raw data (typically in tabular or json format)
 To help you understand the task better, and grasp the principles for generating such plots, I will also provide you with several examples. You should learn from these examples to provide your plot description.
 
 ** IMPORTANT: **
-Your description should be as detailed as possible. For content, explain the precise mapping of variables to visual channels (x, y, hue) and explicitly enumerate every raw data point's coordinate to be drawn to ensure accuracy. For presentation, specify the exact aesthetic parameters, including specific HEX color codes, font sizes for all labels, line widths, marker dimensions, legend placement, and grid styles. You should learn from the examples' content presentation and aesthetic design (e.g., color schemes).
+Your description should be detailed yet concise (≤400 tokens to fit image generation constraints). For content, explain the precise mapping of variables to visual channels (x, y, hue) and enumerate all raw data points. For presentation, specify key aesthetic parameters: HEX color codes for main elements, font sizes for labels, line widths, marker dimensions, legend placement, grid styles. Focus on accuracy and essential styling.
 """
