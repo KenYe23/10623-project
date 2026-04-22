@@ -183,7 +183,7 @@ class PaperVizProcessor:
             if not already_retrieved:
                 data = await self.retriever_agent.process(data, retrieval_setting=retrieval_setting)
             data = await self.planner_agent.process(data)
-            data = await self.stylist_agent.process(data)
+            # data = await self.stylist_agent.process(data)
             data = await self.visualizer_agent.process(data)
             # Use max_critic_rounds from data (if set) or config
             max_rounds = data.get("max_critic_rounds", self.exp_config.max_critic_rounds)
@@ -202,7 +202,7 @@ class PaperVizProcessor:
             if not already_retrieved:
                 data = await self.retriever_agent.process(data, retrieval_setting=retrieval_setting)
             data = await self.planner_agent.process(data)
-            data = await self.stylist_agent.process(data)
+            # data = await self.stylist_agent.process(data)
             data = await self.visualizer_agent.process(data)
             max_rounds = data.get("max_critic_rounds", self.exp_config.max_critic_rounds)
             data = await self._run_parallel_debate_iterations(data, task_name, max_rounds=max_rounds, source="stylist")

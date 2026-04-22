@@ -7,3 +7,6 @@ __pycache__/
 data/
 results/
 flux_server.log
+scripts/test_*.py
+scripts/find_qwen_limit.py
+scripts/diagnose_qwen_503.py

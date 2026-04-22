@@ -81,6 +81,8 @@ class StylistAgent(BaseAgent):
 
         content_list = [{"type": "text", "text": user_prompt}]
 
+        print(f"[StylistAgent] Calling Bedrock (text-only request)", flush=True)
+
         # Generate response
         response_list = await generation_utils.call_model_with_retry_async(
             model_name=self.model_name,
@@ -93,6 +95,7 @@ class StylistAgent(BaseAgent):
             ),
             max_attempts=3,
             retry_delay=5,
+            error_context="StylistAgent",
         )
 
         data[output_desc_key] = response_list[0]

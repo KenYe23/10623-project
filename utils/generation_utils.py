@@ -311,7 +311,13 @@ def _convert_to_bedrock_format(contents: List[Dict[str, Any]]) -> List[Dict[str,
                 fmt = media_type.split("/")[-1]  # "jpeg", "png", etc.
                 if fmt == "jpg":
                     fmt = "jpeg"
-                b64_data = ensure_image_under_limit(source["data"])
+                # Ensure image is under size limit (compress if needed)
+                b64_data = ensure_image_under_limit(source["data"], max_bytes=3_500_000)
+                
+                # Log image size for debugging
+                decoded_size = len(base64.b64decode(b64_data))
+                print(f"[Bedrock] Adding image: format={fmt}, size={decoded_size/1024:.1f}KB", flush=True)
+                
                 bedrock_content.append(
                     {
                         "image": {
@@ -322,7 +328,10 @@ def _convert_to_bedrock_format(contents: List[Dict[str, Any]]) -> List[Dict[str,
                 )
             elif "image_base64" in item:
                 # Shorthand format used by planner_agent
-                b64_data = ensure_image_under_limit(item["image_base64"])
+                b64_data = ensure_image_under_limit(item["image_base64"], max_bytes=3_500_000)
+                decoded_size = len(base64.b64decode(b64_data))
+                print(f"[Bedrock] Adding image: format=jpeg, size={decoded_size/1024:.1f}KB", flush=True)
+                
                 bedrock_content.append(
                     {
                         "image": {
@@ -381,6 +390,39 @@ async def call_bedrock_converse_with_retry_async(
         if config.get("use_prompt_caching", False):
             payload["system"].append({"cachePoint": {"type": "default"}})
 
+    # Log payload size for debugging
+    import json as json_module
+    payload_json = json_module.dumps(payload)
+    payload_size_kb = len(payload_json.encode('utf-8')) / 1024
+    
+    # Log more details about the request
+    system_size_kb = len(system_prompt.encode('utf-8')) / 1024 if system_prompt else 0
+    user_content_size_kb = sum(
+        len(str(b.get('text', '')).encode('utf-8')) 
+        for b in bedrock_content if 'text' in b
+    ) / 1024
+    
+    print(f"[Bedrock] Request to {model_id}:", flush=True)
+    print(f"  - Payload size: {payload_size_kb:.1f}KB", flush=True)
+    print(f"  - System prompt: {system_size_kb:.1f}KB", flush=True)
+    print(f"  - User content: {user_content_size_kb:.1f}KB", flush=True)
+    print(f"  - Content blocks: {len(bedrock_content)}", flush=True)
+    print(f"  - Max tokens: {max_tokens}, Temperature: {temperature}", flush=True)
+    
+    # For debugging 503 errors, save the problematic request
+    if os.environ.get("BEDROCK_DEBUG_DUMP"):
+        debug_dir = Path("/tmp/bedrock_debug")
+        debug_dir.mkdir(exist_ok=True)
+        debug_file = debug_dir / f"request_{int(time.time())}.json"
+        with open(debug_file, "w") as f:
+            json_module.dump({
+                "url": url,
+                "payload": payload,
+                "system_size_kb": system_size_kb,
+                "user_content_size_kb": user_content_size_kb,
+            }, f, indent=2)
+        print(f"  - Debug dump saved to: {debug_file}", flush=True)
+
     response_text_list = []
 
     for attempt in range(max_attempts):
@@ -420,8 +462,27 @@ async def call_bedrock_converse_with_retry_async(
 
         except httpx.HTTPStatusError as e:
             context_msg = f" for {error_context}" if error_context else ""
-            resp_text = e.response.text[:300]
-            current_delay = min(retry_delay * (2**attempt), 120)
+            resp_text = e.response.text[:500]  # Increased from 300 to see more error details
+            
+            # Log full error for 503s to help debug
+            if e.response.status_code == 503:
+                print(f"[Bedrock DEBUG] Full 503 response: {e.response.text}", flush=True)
+                print(f"[Bedrock DEBUG] Request had {len(bedrock_content)} content blocks", flush=True)
+                print(f"[Bedrock DEBUG] Model: {model_id}", flush=True)
+                print(f"[Bedrock DEBUG] Payload size: {payload_size_kb:.1f}KB", flush=True)
+                
+                # Check if this might be a model-specific issue
+                if "qwen" in model_id.lower():
+                    print(f"[Bedrock WARNING] Qwen models have ~15KB text input limit.", flush=True)
+                    if payload_size_kb > 15:
+                        print(f"[Bedrock WARNING] Your payload ({payload_size_kb:.1f}KB) exceeds this limit.", flush=True)
+                        print(f"[Bedrock WARNING] Consider using Claude: bedrock/global.anthropic.claude-sonnet-4-6", flush=True)
+            
+            # For 503 errors, use longer delays (AWS service temporarily unavailable)
+            if e.response.status_code == 503:
+                current_delay = min(retry_delay * (3**attempt), 180)  # More aggressive backoff
+            else:
+                current_delay = min(retry_delay * (2**attempt), 120)
 
             # Don't retry on unrecoverable quota/daily-limit 429s
             if e.response.status_code == 429 and "per day" in resp_text.lower():
@@ -432,7 +493,7 @@ async def call_bedrock_converse_with_retry_async(
                 return ["Error"] * candidate_num
 
             print(
-                f"Bedrock attempt {attempt + 1} failed{context_msg}: "
+                f"Bedrock attempt {attempt + 1}/{max_attempts} failed{context_msg}: "
                 f"HTTP {e.response.status_code} - {resp_text}. "
                 f"Retrying in {current_delay}s..."
             )
@@ -440,6 +501,7 @@ async def call_bedrock_converse_with_retry_async(
                 await asyncio.sleep(current_delay)
             else:
                 print(f"Error: All {max_attempts} Bedrock attempts failed{context_msg}")
+                print(f"Last error: HTTP {e.response.status_code} - {resp_text}")
                 return ["Error"] * candidate_num
         except Exception as e:
             context_msg = f" for {error_context}" if error_context else ""

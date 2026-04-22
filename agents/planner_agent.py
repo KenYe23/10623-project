@@ -24,6 +24,7 @@ from PIL import Image
 
 from utils import generation_utils
 from utils.image_utils import resolve_image_path
+from utils.model_utils import is_qwen_model
 from .base_agent import BaseAgent
 
 
@@ -43,7 +44,11 @@ class PlannerAgent(BaseAgent):
                 "visual_intent_label": "Visual Intent of the Desired Plot",
             }
         else:
-            self.system_prompt = DIAGRAM_PLANNER_AGENT_SYSTEM_PROMPT
+            # Use Qwen-optimized prompt if Qwen model is detected
+            if is_qwen_model(self.model_name):
+                self.system_prompt = DIAGRAM_PLANNER_QWEN_SYSTEM_PROMPT
+            else:
+                self.system_prompt = DIAGRAM_PLANNER_AGENT_SYSTEM_PROMPT
             self.task_config = {
                 "task_name": "diagram",
                 "content_label": "Methodology Section",
@@ -108,6 +113,11 @@ class PlannerAgent(BaseAgent):
             image_path = resolve_image_path(image_path)
             with open(image_path, "rb") as f:
                 ref_image_base64 = base64.b64encode(f.read()).decode("utf-8")
+            
+            # Log image size
+            image_size_kb = len(base64.b64decode(ref_image_base64)) / 1024
+            print(f"[PlannerAgent] Loading reference image {idx+1}: {image_path.name}, size={image_size_kb:.1f}KB", flush=True)
+            
             content_list.append({"type": "image", "image_base64": ref_image_base64})
             user_prompt = ""
 
@@ -120,6 +130,8 @@ class PlannerAgent(BaseAgent):
 
         content_list.append({"type": "text", "text": user_prompt})
 
+        print(f"[PlannerAgent] Calling Bedrock with {len(content_list)} content blocks ({len([c for c in content_list if c.get('type')=='image'])} images)", flush=True)
+
         response_list = await generation_utils.call_model_with_retry_async(
             model_name=self.model_name,
             contents=content_list,
@@ -131,6 +143,7 @@ class PlannerAgent(BaseAgent):
             ),
             max_attempts=3,
             retry_delay=5,
+            error_context="PlannerAgent",
         )
 
         for idx, response in enumerate(response_list):
@@ -146,6 +159,25 @@ To help you understand the task better, and grasp the principles for generating 
 
 ** IMPORTANT: **
 Your description should be as detailed as possible. Semantically, clearly describe each element and their connections. Formally, include various details such as background style (typically pure white or very light pastel), colors, line thickness, icon styles, etc. Remember: vague or unclear specifications will only make the generated figure worse, not better.
+"""
+
+DIAGRAM_PLANNER_QWEN_SYSTEM_PROMPT = """
+Task: Generate detailed diagram descriptions for academic papers.
+
+Input: Methodology section, figure caption, and reference examples.
+Output: Comprehensive diagram description suitable for image generation.
+
+Core Requirements:
+1. Visual Structure: Describe all components (boxes, arrows, layers) and their spatial arrangement
+2. Content: Label each element with precise text from the methodology
+3. Connections: Specify all data/control flows between components
+4. Style Details: Background (white/light), colors, line styles, font sizes, icon types
+
+Key Principles:
+- Focus on the CORE methodology flow and main contributions
+- Learn layout patterns and design aesthetics from the provided examples
+- Be explicit and detailed - vague descriptions produce poor images
+- Extract the essential workflow even from lengthy methodology sections
 """
 
 PLOT_PLANNER_AGENT_SYSTEM_PROMPT = """

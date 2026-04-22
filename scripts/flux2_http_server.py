@@ -14,7 +14,10 @@ import base64
 import json
 import os
 import random
+import sys
 import threading
+import time
+import traceback
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -99,6 +102,13 @@ class Flux2Service:
             self.guidance = float(defaults.get("guidance", 4.0))
 
         self._lock = threading.Lock()
+        
+        print(f"[INFO] Flux2Service initialized:", file=sys.stderr)
+        print(f"  Model: {self.model_name}", file=sys.stderr)
+        print(f"  Guidance distilled: {self.model_info['guidance_distilled']}", file=sys.stderr)
+        print(f"  Remote text encoder: {self.use_remote_text_encoder}", file=sys.stderr)
+        print(f"  CPU offloading: {self.cpu_offloading}", file=sys.stderr)
+        print(f"  Steps: {self.num_steps}, Guidance: {self.guidance}", file=sys.stderr, flush=True)
 
     def _get_remote_prompt_embeds(self, prompts: list[str]) -> torch.Tensor:
         if not prompts:
@@ -110,10 +120,12 @@ class Flux2Service:
         if not hf_token:
             raise RuntimeError(
                 "Remote text-encoder requires a Hugging Face token. "
-                "Run 'hf auth login' or set HF_TOKEN/HUGGINGFACE_TOKEN."
+                "Run 'huggingface-cli login' or set HF_TOKEN/HUGGINGFACE_TOKEN."
             )
 
         payload_prompt: Any = prompts[0] if len(prompts) == 1 else prompts
+        print(f"[DEBUG] Remote text-encoder request with {len(prompts)} prompt(s)", file=sys.stderr, flush=True)
+        
         req = urllib.request.Request(
             self.remote_text_encoder_url,
             data=json.dumps({"prompt": payload_prompt}).encode("utf-8"),
@@ -127,6 +139,7 @@ class Flux2Service:
         try:
             with urllib.request.urlopen(req, timeout=60) as response:
                 raw = response.read()
+                print(f"[DEBUG] Remote text-encoder returned {len(raw)} bytes", file=sys.stderr, flush=True)
         except urllib.error.HTTPError as e:
             msg = e.read().decode("utf-8", errors="ignore")
             raise RuntimeError(f"Remote text-encoder HTTP {e.code}: {msg[:500]}") from e
@@ -143,6 +156,7 @@ class Flux2Service:
         if prompt_embeds.ndim == 2:
             prompt_embeds = prompt_embeds.unsqueeze(0)
 
+        print(f"[DEBUG] Remote prompt_embeds shape: {prompt_embeds.shape}", file=sys.stderr, flush=True)
         return prompt_embeds.to(device=self.torch_device, dtype=torch.bfloat16)
 
     @staticmethod
@@ -165,6 +179,8 @@ class Flux2Service:
         width, height = self._normalize_dims(width, height)
         if seed is None:
             seed = random.randrange(2**31)
+
+        print(f"[DEBUG] Starting generation: {width}x{height}, guidance_distilled={self.model_info['guidance_distilled']}, use_remote={self.use_remote_text_encoder}", file=sys.stderr, flush=True)
 
         with self._lock:
             with torch.no_grad():
@@ -295,13 +311,16 @@ class FluxHandler(BaseHTTPRequestHandler):
             self._write_json(
                 200,
                 {
-                    "created": int(torch.randint(0, 2**31 - 1, (1,)).item()),
+                    "created": int(time.time()),
                     "data": images,
                 },
             )
 
         except Exception as e:
-            self._write_json(500, {"error": f"Generation failed: {e}"})
+            error_msg = f"Generation failed: {e}"
+            traceback.print_exc(file=sys.stderr)
+            print(f"ERROR: {error_msg}", file=sys.stderr, flush=True)
+            self._write_json(500, {"error": error_msg})
 
 
 def main() -> None:
