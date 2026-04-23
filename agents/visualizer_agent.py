@@ -196,6 +196,15 @@ class VisualizerAgent(BaseAgent):
                             retry_delay=30,
                         )
                     )
+                elif "flux-2-pro" in self.model_name.lower():
+                    response_list = (
+                        await generation_utils.call_replicate_flux_with_retry_async(
+                            prompt=prompt_text,
+                            aspect_ratio="1:1",
+                            max_attempts=5,
+                            retry_delay=30,
+                        )
+                    )
                 elif "gpt-image" in self.model_name:
                     image_config = {
                         "size": "1536x1024",

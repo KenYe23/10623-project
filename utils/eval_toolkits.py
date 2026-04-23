@@ -175,7 +175,7 @@ async def _run_single_eval_ref(
                 system_instruction=sys_prompt,
                 temperature=1,
                 candidate_count=1,
-                max_output_tokens=50000,
+                max_output_tokens=8000,
             ),
             max_attempts=5,
             retry_delay=30,

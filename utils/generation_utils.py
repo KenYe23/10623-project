@@ -31,6 +31,7 @@ from google import genai
 from google.genai import types
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
+import replicate
 
 import os
 
@@ -58,6 +59,7 @@ anthropic_client = None
 openai_client = None
 openrouter_client = None
 openrouter_api_key = ""
+replicate_api_token = ""
 
 
 def reinitialize_clients():
@@ -69,7 +71,7 @@ def reinitialize_clients():
     Returns a list of client names that were successfully initialized.
     """
     global gemini_client, anthropic_client, openai_client
-    global openrouter_client, openrouter_api_key
+    global openrouter_client, openrouter_api_key, replicate_api_token
 
     initialized = []
 
@@ -109,6 +111,14 @@ def reinitialize_clients():
         initialized.append("OpenRouter")
     else:
         openrouter_client = None
+    
+    replicate_api_token = get_config_val(
+        "api_keys", "replicate_api_token", "REPLICATE_API_TOKEN", ""
+    )
+    if replicate_api_token:
+        os.environ["REPLICATE_API_TOKEN"] = replicate_api_token
+        print("Initialized Replicate API Token")
+        initialized.append("Replicate")
 
     return initialized
 
@@ -1065,6 +1075,59 @@ async def call_openrouter_image_generation_with_retry_async(
                 await asyncio.sleep(current_delay)
             else:
                 print(f"Error: All {max_attempts} attempts failed{context_msg}")
+                return ["Error"]
+
+    return ["Error"]
+ 
+
+async def call_replicate_flux_with_retry_async(
+    prompt: str,
+    aspect_ratio: str = "1:1",
+    max_attempts: int = 5,
+    retry_delay: int = 30,
+    error_context: str = "",
+) -> list:
+    """
+    ASYNC: Call Replicate API for flux-2-pro model with retry logic.
+    Returns a list with base64-encoded image string.
+    """
+    if not replicate_api_token:
+        print("[Warning]: Replicate API token not configured. Skipping.")
+        return ["Error"]
+
+    for attempt in range(max_attempts):
+        try:
+            output = await asyncio.to_thread(
+                replicate.run,
+                "black-forest-labs/flux-2-pro",
+                input={
+                    "prompt": prompt,
+                    "resolution": "1 MP",
+                    "aspect_ratio": aspect_ratio,
+                    "input_images": [],
+                    "output_format": "webp",
+                    "output_quality": 90,
+                    "safety_tolerance": 2,
+                },
+            )
+
+            # Read the image data
+            image_data = await asyncio.to_thread(output.read)
+
+            # Convert to base64
+            base64_str = base64.b64encode(image_data).decode("utf-8")
+
+            return [base64_str]
+
+        except Exception as e:
+            context_msg = f" for {error_context}" if error_context else ""
+            print(
+                f"[Replicate] Attempt {attempt + 1}/{max_attempts} failed{context_msg}: {e}"
+            )
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(retry_delay)
+            else:
+                print(f"[Replicate] All {max_attempts} attempts failed{context_msg}")
                 return ["Error"]
 
     return ["Error"]
