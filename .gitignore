@@ -4,9 +4,14 @@ __pycache__/
 *.pyc
 __pycache__/
 .venv/
-data/
+data/**
 flux_server.log
 scripts/test_*.py
 scripts/find_qwen_limit.py
 scripts/diagnose_qwen_503.py
 .DS_Store
+
+# include this json file for testing purposes
+!data/PaperBananaBench/
+!data/PaperBananaBench/diagram/
+!data/PaperBananaBench/diagram/test_8_4kb.json
