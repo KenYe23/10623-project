@@ -5,8 +5,8 @@ __pycache__/
 __pycache__/
 .venv/
 data/
-results/
 flux_server.log
 scripts/test_*.py
 scripts/find_qwen_limit.py
 scripts/diagnose_qwen_503.py
+.DS_Store

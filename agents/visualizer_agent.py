@@ -200,7 +200,7 @@ class VisualizerAgent(BaseAgent):
                     response_list = (
                         await generation_utils.call_replicate_flux_with_retry_async(
                             prompt=prompt_text,
-                            aspect_ratio="1:1",
+                            aspect_ratio="16:9",
                             max_attempts=5,
                             retry_delay=30,
                         )
