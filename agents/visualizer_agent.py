@@ -80,6 +80,17 @@ def _execute_plot_code_worker(code_text: str) -> str:
 class VisualizerAgent(BaseAgent):
     """Visualizer Agent to generate images based on user queries"""
 
+    @staticmethod
+    def _normalize_critic_suggestions(suggestions: Any) -> str:
+        """Normalize critic suggestions payload into a comparable string."""
+        if isinstance(suggestions, list):
+            return "\n".join(
+                str(item).strip() for item in suggestions if str(item).strip()
+            )
+        if suggestions is None:
+            return ""
+        return str(suggestions).strip()
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -142,9 +153,11 @@ class VisualizerAgent(BaseAgent):
                 critic_suggestions_key = (
                     f"target_{task_name}_critic_suggestions{round_idx}"
                 )
-                critic_suggestions = data.get(critic_suggestions_key, "")
+                critic_suggestions = self._normalize_critic_suggestions(
+                    data.get(critic_suggestions_key, "")
+                )
 
-                if critic_suggestions.strip() == "No changes needed." and round_idx > 0:
+                if critic_suggestions == "No changes needed." and round_idx > 0:
                     # Reuse previous round's base64
                     prev_base64_key = (
                         f"target_{task_name}_critic_desc{round_idx - 1}_base64_jpg"

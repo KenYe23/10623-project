@@ -49,7 +49,7 @@ async def evaluate_round(
     task_name: str,
     eval_model_name: str,
     work_dir: Path,
-    max_concurrent: int = 10,
+    max_concurrent: int = 1,
 ) -> list:
     """Re-evaluate all samples at a given round, returning updated data."""
 
@@ -130,8 +130,8 @@ def main():
     parser.add_argument(
         "--max_concurrent",
         type=int,
-        default=10,
-        help="Max concurrent evaluation calls (default: 10)",
+        default=1,
+        help="Max concurrent evaluation calls (default: 1)",
     )
     args = parser.parse_args()
 
