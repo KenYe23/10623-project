@@ -124,14 +124,14 @@ def main():
     parser.add_argument(
         "--eval_model_name",
         type=str,
-        default="bedrock/us.meta.llama4-maverick-17b-instruct-v1:0",
-        help="Model to use for evaluation (default: Bedrock LLaMA4-Maverick-17B-Instruct-V1:0)",
+        default="bedrock/qwen.qwen3-vl-235b-a22b",
+        help="Model to use for evaluation (default: Bedrock Qwen Qwen3-VL-235B-A22B)",
     )
     parser.add_argument(
         "--max_concurrent",
         type=int,
-        default=1,
-        help="Max concurrent evaluation calls (default: 1)",
+        default=5,
+        help="Max concurrent evaluation calls (default: 5)",
     )
     args = parser.parse_args()
 
