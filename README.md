@@ -5,113 +5,105 @@
 ## Architecture
 
 ```
-Retriever → Planner → Stylist → Visualizer ─┬─→ Critic A (Qwen3-VL-235B)  ─→ Synthesizer (Qwen3-VL-235B) → Visualizer → …
-                                             └─→ Critic B (Claude Sonnet 4.6)   ─↗
+Planner → Visualizer ─┬─→ Critic A (Llama 4 Maverick)  ─→ Synthesizer (Llama 4 Maverick) → Visualizer → …
+                       └─→ Critic B (Claude Sonnet 4.6)  ─↗
 ```
 
 | Role | Model | Provider |
 |------|-------|----------|
-| Planner, Stylist, Synthesizer, Critic A | Qwen3-VL-235B-A22B | AWS Bedrock |
+| Planner, Synthesizer, Critic A | Llama 4 Maverick 17B | AWS Bedrock |
 | Critic B | Claude Sonnet 4.6 | AWS Bedrock |
-| Visualizer (image gen) | FLUX.2-dev | Self-hosted (local HTTP server on H100) |
+| Visualizer (image gen) | FLUX-2-pro | Replicate API |
+| Evaluation Judge | Llama 4 Maverick 17B | AWS Bedrock |
+
+> **Note:** The Retriever and Stylist agents from the original PaperBanana pipeline are **omitted** in our experiments. Retriever was budget-prohibitive, and Stylist showed minimal impact on faithfulness per the paper's own ablation. Their code remains in the codebase for backward compatibility.
 
 **Key files:**
 - `agents/parallel_critic_agent.py` — Runs two critics in parallel via `asyncio.gather`
 - `agents/synthesizer_agent.py` — Reconciles two critiques into unified refinement
 - `agents/critic_agent.py` — Single critic (supports `output_prefix` for namespaced keys)
 - `utils/paperviz_processor.py` — `dev_parallel_debate` pipeline mode
-
----
-
-## Prerequisites
-
-- **PSC Bridges-2 account** with GPU allocation (H100-80GB)
-- **AWS Bedrock access** with an API key (ABSK bearer token) for Claude Sonnet 4.6 and Qwen3-VL-235B in `us-east-1`
-- **Hugging Face account** with access to gated model `black-forest-labs/FLUX.2-dev`
-- **Hugging Face access token** (create at: https://huggingface.co/settings/tokens)
-- Python 3.12
+- `utils/generation_utils.py` — Unified model router (Bedrock, Gemini, Anthropic, OpenAI, OpenRouter)
 
 ---
 
 ## Setup
 
-Run these steps in order. Steps 1-6 are usually one-time per environment, while the "Running Experiments" section can be repeated for multiple runs.
+### Option A: Local Setup (Replicate API)
 
-### 1. PSC Storage Configuration
-
-Run this on the PSC login node and add it to your shell startup file (`~/.bashrc`) so it is available every login:
+For running experiments locally without a GPU cluster, using FLUX-2-pro via Replicate for image generation. See [SETUP_FLUX_API.md](SETUP_FLUX_API.md) for details.
 
 ```bash
-# Storage Redirects for PaperBanana (25GB Quota Fix)
-export HF_HOME=$PROJECT/hf_cache
-export HF_HUB_CACHE=$HF_HOME/hub
-export XDG_CACHE_HOME=$PROJECT/.cache
-export HF_HUB_DISABLE_XET=1
+conda create -n paperbanana python=3.12 -y
+conda activate paperbanana
+pip install -r requirements.txt
+
+export REPLICATE_API_TOKEN="..."
+export AWS_BEARER_TOKEN_BEDROCK="..."
 ```
 
-### 2. Clone Repositories
+### Option B: PSC Bridges-2 Setup (Self-Hosted FLUX.2-dev)
+
+For running experiments on PSC with a self-hosted FLUX.2-dev image generation server.
+
+#### Prerequisites
+
+- **PSC Bridges-2 account** with GPU allocation (V100-32GB for baseline, H100-80GB for full pipeline)
+- **AWS Bedrock access** with an ABSK bearer token for Llama 4 Maverick and Claude Sonnet 4.6 in `us-east-1`
+- **Hugging Face account** with access to gated model `black-forest-labs/FLUX.2-dev`
+- Python 3.12
+
+#### 1. PSC Storage Configuration
+
+Add to your `~/.bashrc` (critical due to 25 GB home directory quota):
+
+```bash
+export HF_HOME=$PROJECT/.cache/huggingface
+export TRANSFORMERS_CACHE=$PROJECT/.cache/huggingface/transformers
+export HF_DATASETS_CACHE=$PROJECT/.cache/huggingface/datasets
+export HF_HUB_DISABLE_XET=1
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export CONDA_PKGS_DIRS=$PROJECT/.conda/pkgs
+export CONDA_ENVS_DIRS=$PROJECT/.conda/envs
+export PIP_CACHE_DIR=$PROJECT/.cache/pip
+export TMPDIR=$PROJECT/tmp
+```
+
+#### 2. Clone and Install
 
 ```bash
 cd $PROJECT
 git clone https://github.com/KenYe23/10623-project.git PaperBanana
-```
-
-### 3. Create Environment
-
-```bash
 module load anaconda3
 conda create -n paperbanana python=3.12 -y
 conda activate paperbanana
 
 cd PaperBanana
 pip install -r requirements.txt
-
-# FLUX.2-dev dependencies (from sibling repo)
-cd $PROJECT
-git clone https://github.com/black-forest-labs/flux2.git
-cd flux2
-pip install -e . --extra-index-url https://download.pytorch.org/whl/cu129 --no-cache-dir
-
-cd $PROJECT/PaperBanana
+pip install hf_transfer
 ```
 
-### 4. Hugging Face login (required before downloading FLUX.2-dev)
+#### 3. Hugging Face Login (for FLUX.2-dev)
 
-`FLUX.2-dev` is gated.
-
-1. **Request model access:**
-   - Open https://huggingface.co/black-forest-labs/FLUX.2-dev in a browser
-   - If you see a checkbox, click to **accept model terms**
-   - If you see "Request access," click and wait for approval (usually instant)
-   
-2. Create a token at https://huggingface.co/settings/tokens (read access is sufficient).
-
-3. Login in terminal:
+`FLUX.2-dev` is gated — accept model terms at https://huggingface.co/black-forest-labs/FLUX.2-dev, then:
 
 ```bash
 hf auth login
 ```
 
-Verify:
+#### 4. Pre-download FLUX.2-dev Weights
 
+For the **quantized** server (V100-compatible):
 ```bash
-hf auth whoami
+hf download diffusers/FLUX.2-dev-bnb-4bit --local-dir $PROJECT/models/FLUX.2-dev-bnb-4bit
 ```
 
-### 5. Pre-download FLUX.2-dev Weights
-
-Download on a compute node (plan for >100 GB):
-
+For the **full-precision** server (H100 only):
 ```bash
-mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$XDG_CACHE_HOME"
-pip install hf_transfer
-export HF_HUB_ENABLE_HF_TRANSFER=1
 hf download black-forest-labs/FLUX.2-dev --local-dir $PROJECT/models/FLUX.2-dev
 ```
 
-### 6. Download the Dataset
-
-Download [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) and place it under `data/`:
+#### 5. Download the Dataset
 
 ```bash
 python -c "
@@ -128,8 +120,9 @@ Expected structure:
 data/PaperBananaBench/
 ├── diagram/
 │   ├── images/
-│   ├── test.json       # 292 test cases
-│   └── ref.json        # reference examples for Retriever
+│   ├── test.json          # 292 test cases (full)
+│   ├── test_8_4kb.json    # 50 test cases (methodology <8.4 KB)
+│   └── ref.json           # reference examples for Retriever
 └── plot/
 ```
 
@@ -137,89 +130,74 @@ data/PaperBananaBench/
 
 ## Running Experiments
 
-You only need to complete the **Setup** section once. On subsequent PSC logins, ensure your environment is configured before running.
-
-### 1. Runtime environment variables
-
-Run this block before any local test or Slurm submission:
+### Environment Variables
 
 ```bash
-# Required for all model calls (Claude, Qwen)
+# Required for all Bedrock model calls
 export AWS_BEARER_TOKEN_BEDROCK="ABSKQmVkcm9ja0FQSUtleS..."
 export AWS_BEDROCK_REGION="us-east-1"
+
+# For Replicate API (local runs)
+export REPLICATE_API_TOKEN="..."
+
+# For self-hosted FLUX server (PSC runs)
 export FLUX2_SERVER_URL="http://localhost:30000"
-export FLUX_SERVER_ARGS="--model_name flux.2-dev --remote_text_encoder"
-
-# Optional model overrides for Slurm scripts
-export MAIN_MODEL_NAME="bedrock/qwen.qwen3-vl-235b-a22b"
-export CRITIC_B_MODEL_NAME="bedrock/global.anthropic.claude-sonnet-4-6"
-export IMAGE_GEN_MODEL_NAME="flux2-dev"
 ```
 
-**Optional: Non-Bedrock Models**
-If you wish to use providers like Gemini or OpenRouter directly (bypassing Bedrock), initialize the model config:
-```bash
-cp configs/model_config.template.yaml configs/model_config.yaml
-# Then edit configs/model_config.yaml with your API keys
-```
-
-### 2. Quick Local Test (1 sample)
-
-To verify the pipeline works end-to-end before submitting full Slurm jobs, request an interactive node with an 80GB GPU to avoid OutOfMemory errors:
+### Local Run (Replicate API)
 
 ```bash
-# Request an interactive H100 80GB node (1 hour limit)
-srun --partition=GPU-shared --gres=gpu:h100-80:1 --time=1:00:00 --pty bash
-
-# Activate environment
-module load anaconda3
-conda activate paperbanana
-cd $PROJECT/PaperBanana
-
-# Start FLUX.2-dev server in background and wait for health check
-python scripts/flux2_http_server.py --port 30000 ${FLUX_SERVER_ARGS} > flux_server.log 2>&1 &
-until curl -sf http://localhost:30000/health > /dev/null; do
-    echo "waiting for FLUX server..."
-    sleep 5
-done
-
-# Run 1-sample smoke test
+# Baseline: single-critic
 python main.py \
     --dataset_name PaperBananaBench \
     --task_name diagram \
-    --split_name test \
+    --split_name test_8_4kb \
+    --exp_mode dev_full \
+    --max_critic_rounds 3 \
+    --main_model_name "bedrock/us.meta.llama4-maverick-17b-instruct-v1:0" \
+    --retrieval_setting none \
+    --image_gen_model_name "flux-2-pro" \
+    --max_concurrent 1
+
+# Parallel Debate
+python main.py \
+    --dataset_name PaperBananaBench \
+    --task_name diagram \
+    --split_name test_8_4kb \
     --exp_mode dev_parallel_debate \
-    --max_critic_rounds 1 \
-    --max_samples 1 \
-    --max_concurrent 1 \
-    --main_model_name "bedrock/qwen.qwen3-vl-235b-a22b" \
-    --image_gen_model_name "flux2-dev" \
-    --critic_b_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
+    --max_critic_rounds 3 \
+    --main_model_name "bedrock/us.meta.llama4-maverick-17b-instruct-v1:0" \
+    --critic_b_model_name "bedrock/global.anthropic.claude-sonnet-4-6" \
+    --retrieval_setting none \
+    --image_gen_model_name "flux-2-pro" \
+    --max_concurrent 1
 ```
 
-### Full Runs via Slurm
+### PSC Slurm Runs
 
-Both scripts start the FLUX.2-dev local server as a background process, wait for readiness, then run the pipeline. They use `--resume` to skip already-processed samples.
+Both scripts start the FLUX.2-dev server as a background process, wait for readiness, then run the pipeline with `--resume` to skip already-processed samples.
 
 ```bash
 cd $PROJECT/PaperBanana
 mkdir -p logs
 
-# Baseline: single-critic (dev_full)
+# Baseline: single-critic (V100, ~9 hours)
 sbatch scripts/run_combined_baseline.sh
 
-# Proposed: parallel debate (dev_parallel_debate)
+# Parallel Debate (H100, ~48 hours)
+MAIN_MODEL_NAME="bedrock/us.meta.llama4-maverick-17b-instruct-v1:0" \
 sbatch scripts/run_combined_parallel.sh
 
-# Sharded run [0, 50)
-START_IDX=0 END_IDX=50
-sbatch scripts/run_combined_parallel.sh
+# Sharded run (process samples 0-49)
+START_IDX=0 END_IDX=50 sbatch scripts/run_combined_parallel.sh
 
 # Merge shard outputs after all jobs finish
 python scripts/merge_shard_results.py \
     --inputs results/PaperBananaBench_diagram/*dev_parallel_debate_test*.json \
-    --output results/PaperBananaBench_diagram/merged_dev_parallel_debate_test.json
+    --output results/PaperBananaBench_diagram/merged_parallel.json
 ```
+
+---
 
 ## CLI Reference
 
@@ -231,17 +209,17 @@ python main.py [OPTIONS]
 |----------|---------|-------------|
 | `--dataset_name` | `PaperBananaBench` | Dataset name |
 | `--task_name` | `diagram` | `diagram` or `plot` |
-| `--split_name` | `test` | Dataset split |
+| `--split_name` | `test` | Dataset split (e.g. `test`, `test_8_4kb`) |
 | `--exp_mode` | `dev` | Pipeline mode (see below) |
 | `--retrieval_setting` | `auto` | `auto`, `manual`, `random`, `none` |
 | `--max_critic_rounds` | `3` | Max critique-refinement iterations |
-| `--max_samples` | `0` | Limit number of samples processed (`0` = all) |
+| `--max_samples` | `0` | Limit number of samples (`0` = all) |
 | `--start_idx` | `0` | Start index (inclusive) for shard processing |
 | `--end_idx` | `-1` | End index (exclusive) for shard processing (`-1` = end) |
-| `--max_concurrent` | `10` | Max number of samples processed concurrently |
-| `--main_model_name` | *(from config)* | Main VLM model (e.g. `bedrock/qwen.qwen3-vl-235b-a22b`) |
-| `--image_gen_model_name` | *(from config)* | Image generation model (e.g. `flux2-dev`) |
-| `--critic_b_model_name` | `""` | Second critic for parallel debate (e.g. `bedrock/global.anthropic.claude-sonnet-4-6`) |
+| `--max_concurrent` | `10` | Max concurrent samples |
+| `--main_model_name` | *(from config)* | Main VLM (e.g. `bedrock/us.meta.llama4-maverick-17b-instruct-v1:0`) |
+| `--image_gen_model_name` | *(from config)* | Image gen model (e.g. `flux-2-pro`, `flux2-dev`) |
+| `--critic_b_model_name` | `""` | Second critic for parallel debate |
 | `--resume` | `false` | Skip already-processed samples |
 
 ### Experiment Modes
@@ -252,8 +230,8 @@ python main.py [OPTIONS]
 | `dev_planner` | Retriever → Planner → Visualizer |
 | `dev_planner_stylist` | Retriever → Planner → Stylist → Visualizer |
 | `dev_planner_critic` | Retriever → Planner → Visualizer → Critic loop |
-| `dev_full` | Full pipeline (Retriever → Planner → Stylist → Visualizer → Critic loop) |
-| **`dev_parallel_debate`** | **Full pipeline + Parallel Debate (two critics → synthesizer → visualizer loop)** |
+| `dev_full` | Planner → Visualizer → Critic loop (baseline) |
+| **`dev_parallel_debate`** | **Planner → Visualizer → [Critic A ∥ Critic B] → Synthesizer → Visualizer loop** |
 
 ---
 
@@ -268,27 +246,37 @@ PaperBanana/
 │   ├── stylist_agent.py
 │   ├── visualizer_agent.py
 │   ├── critic_agent.py
-│   ├── parallel_critic_agent.py       # NEW
-│   ├── synthesizer_agent.py           # NEW
+│   ├── parallel_critic_agent.py       # NEW — parallel critique orchestrator
+│   ├── synthesizer_agent.py           # NEW — critique reconciliation
 │   ├── vanilla_agent.py
 │   └── polish_agent.py
 ├── utils/
-│   ├── config.py
+│   ├── config.py                      # ExpConfig dataclass
 │   ├── paperviz_processor.py          # Pipeline orchestration
 │   ├── eval_toolkits.py               # VLM-as-Judge evaluation
 │   ├── generation_utils.py            # Unified model router (Bedrock, Gemini, etc.)
 │   └── image_utils.py
+├── prompts/                           # System prompt templates
 ├── configs/
 │   └── model_config.template.yaml
 ├── scripts/
 │   ├── run_combined_baseline.sh       # Slurm: single-critic baseline
 │   ├── run_combined_parallel.sh       # Slurm: parallel debate
+│   ├── flux2_http_server.py           # Full-precision FLUX.2-dev server (H100)
+│   ├── flux2_quantized_server.py      # 4-bit quantized FLUX.2-dev server (V100)
 │   ├── eval_round.py                  # Post-hoc eval of intermediate rounds
-│   └── ablation_table.py              # Aggregate evals into ablation table
+│   ├── ablation_table.py              # Aggregate evals into ablation table
+│   ├── merge_shard_results.py         # Merge sharded result JSONs
+│   ├── create_test_subset.py          # Create filtered test subsets
+│   └── create_qwen_compatible_subset.py
+├── visualize/
+│   ├── show_pipeline_evolution.py     # Streamlit: per-sample pipeline viewer
+│   └── show_referenced_eval.py        # Streamlit: evaluation scorecard
 ├── data/
 │   └── PaperBananaBench/
 ├── results/
 ├── main.py                            # Entry point
+├── SETUP_FLUX_API.md                  # Replicate API setup guide
 ├── requirements.txt
 └── README.md
 ```
@@ -297,17 +285,17 @@ PaperBanana/
 
 ## Results
 
-Results are saved to `results/PaperBananaBench_diagram/<timestamp>_<mode>_test.json`.
+Results are saved to `results/PaperBananaBench_diagram/<timestamp>_<mode>_<split>.json`.
 
 Each result JSON contains per-sample data including:
 - Generated images (base64) at **every** critic round (not just the final one)
 - Critic suggestions and revised descriptions per round
 - Synthesis reasoning (parallel debate only)
-- VLM-as-Judge evaluation scores — but **only for the final round's image**
+- VLM-as-Judge evaluation scores for the **final round's image**
 
-### Post-Hoc Evaluation (Mini-Ablation)
+### Post-Hoc Evaluation (Ablation Table)
 
-The main pipeline evaluates only the final image (t=3). To build the full ablation table, you need to evaluate intermediate rounds (t=0, t=1) separately. This does **not** require a GPU — only Bedrock API calls.
+The main pipeline evaluates only the final image (t=3). To build the full ablation table, evaluate intermediate rounds separately. This does **not** require a GPU — only Bedrock API calls.
 
 **Step 1:** After both generation runs complete, run post-hoc evaluations:
 
@@ -316,13 +304,16 @@ The main pipeline evaluates only the final image (t=3). To build the full ablati
 # Let PARALLEL=results/.../timestamp_dev_parallel_debate_test.json
 
 # t=0 (shared initial image, same for both pipelines)
-python scripts/eval_round.py --input $BASELINE --round 0 --output results/t0_eval.json
+python scripts/eval_round.py --input $BASELINE --round 0 --output results/t0_eval.json \
+    --eval_model_name "bedrock/us.meta.llama4-maverick-17b-instruct-v1:0"
 
 # Solo Critic t=1
-python scripts/eval_round.py --input $BASELINE --round 1 --output results/solo_t1_eval.json
+python scripts/eval_round.py --input $BASELINE --round 1 --output results/solo_t1_eval.json \
+    --eval_model_name "bedrock/us.meta.llama4-maverick-17b-instruct-v1:0"
 
 # Parallel Debate t=1
-python scripts/eval_round.py --input $PARALLEL --round 1 --output results/debate_t1_eval.json
+python scripts/eval_round.py --input $PARALLEL --round 1 --output results/debate_t1_eval.json \
+    --eval_model_name "bedrock/us.meta.llama4-maverick-17b-instruct-v1:0"
 ```
 
 (Solo t=3 and Parallel t=3 are already evaluated by the main pipeline.)
@@ -339,56 +330,37 @@ python scripts/ablation_table.py \
     --csv       results/ablation_table.csv
 ```
 
-Output:
-```
-=============================================================================
-Condition                 | Faith         | Conci         | Reada         | Aesth         | Overa         |   N
------------------------------------------------------------------------------
-t=0 (shared)              | 35.2/ 30.1/ 34.7 | ...           | ...           | ...           | ...           | 292
-Solo Critic t=1           | 40.3/ 28.5/ 31.2 | ...           | ...           | ...           | ...           | 292
-Solo Critic t=3           | 43.1/ 25.0/ 31.9 | ...           | ...           | ...           | ...           | 292
-Parallel Debate t=1       | 45.5/ 27.0/ 27.5 | ...           | ...           | ...           | ...           | 292
-Parallel Debate t=3       | 48.2/ 24.1/ 27.7 | ...           | ...           | ...           | ...           | 292
-=============================================================================
+### Experimental Results (n=50, Llama 4 Maverick Judge)
+
 Format: Model% / Tie% / Human%
-```
+
+| Condition | Faithfulness | Conciseness | Readability | Aesthetics | Overall |
+|---|---|---|---|---|---|
+| t=0 (shared) | 0/82/18 | 18/56/26 | 2/92/6 | 12/60/28 | 20/34/46 |
+| Solo Critic t=1 | 0/80/20 | 22/44/34 | 4/94/2 | 16/62/22 | 26/34/40 |
+| Solo Critic t=3 | 0/82/18 | 18/56/26 | 2/92/6 | 12/60/28 | 20/34/46 |
+| Parallel Debate t=1 | 0/76/24 | 16/48/36 | 2/90/8 | 12/56/32 | 16/36/48 |
+| **Parallel Debate t=3** | **0/88/12** | **18/52/30** | **2/94/4** | **16/68/16** | **22/36/42** |
 
 ### Visualize Results
 
 ```bash
-# Start viewer on remote compute node (keep this terminal open)
+# Pipeline evolution viewer
 streamlit run visualize/show_pipeline_evolution.py
-```
 
-If running on PSC remotely, create an SSH tunnel from your **local laptop** terminal:
-
-```bash
-# Replace w010 with your active compute-node hostname
-ssh -N -L 8501:w010:8501 kye3@bridges2.psc.edu
-```
-
-Then open this URL on your laptop browser:
-
-```text
-http://localhost:8501
-```
-
-In the app sidebar, set **Results JSON/JSONL Path** to your result file, for example:
-
-```text
-/ocean/projects/cis260099p/kye3/PaperBanana/results/PaperBananaBench_diagram/0412_1423_autoret_dev_parallel_debate_test.json
-```
-
-Second viewer:
-
-```bash
-
-# View evaluation scorecard
+# Evaluation scorecard
 streamlit run visualize/show_referenced_eval.py
+```
+
+If running on PSC, create an SSH tunnel from your local machine:
+
+```bash
+ssh -N -L 8501:<compute-node>:8501 <username>@bridges2.psc.edu
+# Then open http://localhost:8501
 ```
 
 ---
 
 ## Acknowledgments
 
-Built on [PaperBanana](https://github.com/dwzhu-pku/PaperBanana) (Zhu et al., 2026). Uses [FLUX.2-dev](https://github.com/black-forest-labs/flux2) (self-hosted) and [AWS Bedrock](https://aws.amazon.com/bedrock/) for Claude and Qwen VLM access.
+Built on [PaperBanana](https://github.com/dwzhu-pku/PaperBanana) (Zhu et al., 2026). Uses [FLUX.2-dev](https://github.com/black-forest-labs/flux2) for self-hosted image generation, [Replicate](https://replicate.com/) for FLUX-2-pro cloud API, and [AWS Bedrock](https://aws.amazon.com/bedrock/) for Llama 4 Maverick and Claude Sonnet VLM access.
