@@ -12,12 +12,38 @@ Image key mapping (for task_name="diagram"):
   round=2  →  target_diagram_critic_desc1_base64_jpg    (after 2 critic iterations)
   round=3  →  target_diagram_critic_desc2_base64_jpg    (after 3 critic iterations)
 
+export BASELINE=results/PaperBananaBench_diagram/0423_0757_noneret_dev_full_test_8_4kb.json
+export PARALLEL=results/PaperBananaBench_diagram/0423_1942_noneret_dev_parallel_debate_test_8_4kb_t1_eval.json
+
+# t=0 (shared initial image, same for both pipelines)
+python scripts/eval_round.py --input $BASELINE --round 0 --output results/t0_eval_claude.json
+
+# Solo Critic t=1
+python scripts/eval_round.py --input $BASELINE --round 1 --output results/solo_t1_eval_claude.json
+
+# Solo Critic t=3
+python scripts/eval_round.py --input $BASELINE --round 3 --output results/solo_t3_eval_claude.json
+
+# Parallel Debate t=1
+python scripts/eval_round.py --input $PARALLEL --round 1 --output results/debate_t1_eval_claude.json
+
+# Parallel Debate t=3
+python scripts/eval_round.py --input $PARALLEL --round 3 --output results/debate_t3_eval_claude.json
+
+python scripts/ablation_table.py \
+    --t0        results/t0_eval_claude.json \
+    --solo_t1   results/solo_t1_eval_claude.json \
+    --solo_t3   results/solo_t3_eval_claude.json \
+    --debate_t1 results/debate_t1_eval_claude.json \
+    --debate_t3 results/debate_t3_eval_claude.json \
+    --csv       results/ablation_table_claude.csv
+
 Usage:
     python scripts/eval_round.py \
         --input  results/.../timestamp_dev_full_test.json \
         --round  1 \
-        --output results/.../baseline_t1_eval.json \
-        --eval_model_name "bedrock/qwen.qwen3-vl-235b-a22b"
+        --output results/.../baseline_t1_eval_claude.json \
+        --eval_model_name "bedrock/global.anthropic.claude-sonnet-4-6"
 
 Does NOT require a GPU — only makes Bedrock API calls for evaluation.
 """
@@ -124,14 +150,14 @@ def main():
     parser.add_argument(
         "--eval_model_name",
         type=str,
-        default="bedrock/qwen.qwen3-vl-235b-a22b",
-        help="Model to use for evaluation (default: Bedrock Qwen Qwen3-VL-235B-A22B)",
+        default="bedrock/global.anthropic.claude-sonnet-4-6",
+        help="Model to use for evaluation (default: Bedrock Claude Sonnet 4-6)",
     )
     parser.add_argument(
         "--max_concurrent",
         type=int,
-        default=5,
-        help="Max concurrent evaluation calls (default: 5)",
+        default=3,
+        help="Max concurrent evaluation calls (default: 3)",
     )
     args = parser.parse_args()
 

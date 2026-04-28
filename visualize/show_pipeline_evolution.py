@@ -252,7 +252,7 @@ def display_stage_comparison(item):
                     # Display critic suggestions if this is a critic stage
                     if "suggestions_key" in stage:
                         suggestions = item.get(stage["suggestions_key"], "")
-                        if suggestions and suggestions.strip() != "No changes needed.":
+                        if suggestions:
                             with st.expander("💬 Critic Suggestions", expanded=False):
                                 st.write(suggestions)
 
